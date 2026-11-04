@@ -2,8 +2,10 @@ package lock
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,48 @@ func TestConcurrentRunRejected(t *testing.T) {
 	}
 	if pe.Class != protocol.ClassRetry {
 		t.Fatalf("class = %s, want retry", pe.Class)
+	}
+}
+
+func TestConcurrentStaleTakeoverSingleWinner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lock.json")
+	host, _ := os.Hostname()
+	stale := Info{PID: 1 << 30, Hostname: host, StartedAt: time.Now().Add(-time.Hour), RunID: "dead"}
+	data, _ := json.Marshal(stale)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan *FileLock, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			if l, err := Acquire(path, fmt.Sprintf("run-%d", i), time.Now); err == nil {
+				results <- l
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var locks []*FileLock
+	for l := range results {
+		locks = append(locks, l)
+	}
+	if len(locks) != 1 {
+		for _, l := range locks {
+			_ = l.Release()
+		}
+		t.Fatalf("successful acquires = %d, want exactly 1", len(locks))
+	}
+	if err := locks[0].Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 

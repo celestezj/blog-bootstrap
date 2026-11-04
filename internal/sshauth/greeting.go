@@ -71,6 +71,10 @@ type Manager struct {
 	Sleep        func(time.Duration)
 	PollInterval time.Duration
 	PollTimeout  time.Duration
+
+	// KnownHosts overrides UserKnownHostsFile for read-only probes so that
+	// inspection never mutates the user's real known_hosts before consent.
+	KnownHosts string
 }
 
 func (m *Manager) now() time.Time {
@@ -113,7 +117,7 @@ func (m *Manager) Greeting(ctx context.Context, key Key, ep Endpoint) (string, e
 	if err != nil {
 		return "", err
 	}
-	args := SSHArgs(ep, key.Path)
+	args := SSHArgsWithKnownHosts(ep, key.Path, m.KnownHosts)
 	res := m.Runner.Run(ctx, "", nil, sshPath, args...)
 	if res.Err != nil {
 		return "", protocol.Fatal("AUTH_PROBE_FAILED", "ssh 探针执行失败: "+res.Err.Error()).WithCause(res.Err)
@@ -123,11 +127,20 @@ func (m *Manager) Greeting(ctx context.Context, key Key, ep Endpoint) (string, e
 
 // SSHArgs builds the deterministic ssh argument list. It never uses a shell.
 func SSHArgs(ep Endpoint, keyPath string) []string {
+	return SSHArgsWithKnownHosts(ep, keyPath, "")
+}
+
+// SSHArgsWithKnownHosts adds an optional throwaway known_hosts file so probes
+// can run without touching the user's real file.
+func SSHArgsWithKnownHosts(ep Endpoint, keyPath, knownHosts string) []string {
 	args := []string{
 		"-T",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=10",
 		"-o", "StrictHostKeyChecking=accept-new",
+	}
+	if knownHosts != "" {
+		args = append(args, "-o", "UserKnownHostsFile="+knownHosts)
 	}
 	if keyPath != "" {
 		args = append(args, "-i", keyPath, "-o", "IdentitiesOnly=yes")
@@ -139,26 +152,47 @@ func SSHArgs(ep Endpoint, keyPath string) []string {
 	return args
 }
 
+// TempKnownHosts returns an empty known_hosts file for read-only probes.
+func TempKnownHosts() (string, func(), error) {
+	f, err := os.CreateTemp("", "blog-bootstrap-known_hosts-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", func() {}, err
+	}
+	return name, func() { _ = os.Remove(name) }, nil
+}
+
 // ChooseEndpoint probes github.com:22 then ssh.github.com:443. Reachability is
 // proven by any non-connection SSH response (including auth failure).
 func (m *Manager) ChooseEndpoint(ctx context.Context) (Endpoint, error) {
+	return m.ChooseEndpointFrom(ctx, Endpoint{})
+}
+
+// ChooseEndpointFrom tries preferred first when set, then the standard order.
+// It lets verification keep a previously working endpoint while still falling
+// back when that endpoint becomes unreachable.
+func (m *Manager) ChooseEndpointFrom(ctx context.Context, preferred Endpoint) (Endpoint, error) {
 	sshPath, err := m.ssh()
 	if err != nil {
 		return Endpoint{}, err
 	}
-	var last string
+	candidates := make([]Endpoint, 0, len(Endpoints)+1)
+	if preferred.Host != "" {
+		candidates = append(candidates, preferred)
+	}
 	for _, ep := range Endpoints {
-		args := []string{
-			"-T",
-			"-o", "BatchMode=yes",
-			"-o", "ConnectTimeout=10",
-			"-o", "StrictHostKeyChecking=accept-new",
+		if ep == preferred {
+			continue
 		}
-		if ep.Port != 22 {
-			args = append(args, "-p", strconv.Itoa(ep.Port))
-		}
-		args = append(args, "git@"+ep.Host)
-		res := m.Runner.Run(ctx, "", nil, sshPath, args...)
+		candidates = append(candidates, ep)
+	}
+	var last string
+	for _, ep := range candidates {
+		res := m.Runner.Run(ctx, "", nil, sshPath, SSHArgsWithKnownHosts(ep, "", m.KnownHosts)...)
 		out := res.Combined()
 		if !netx.IsConnectFailure(out) {
 			return ep, nil

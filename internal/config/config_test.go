@@ -120,6 +120,8 @@ func TestValidateRequired(t *testing.T) {
 		{"branch", func(c *Config) { c.Workspace.Branch = "-bad" }},
 		{"dotdot branch", func(c *Config) { c.Workspace.Branch = "a..b" }},
 		{"alias", func(c *Config) { c.Auth.Alias = "bad alias" }},
+		{"key newline", func(c *Config) { c.Auth.Key = "~/.ssh/id\nProxyCommand evil" }},
+		{"key quote", func(c *Config) { c.Auth.Key = `~/.ssh/id"x` }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

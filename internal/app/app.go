@@ -212,6 +212,9 @@ func (a *App) cmdRun(args []string) int {
 		return a.fail("run", err, c.json)
 	}
 	defer func() { _ = fl.Release() }()
+	if err := a.reloadState(ctx); err != nil {
+		return a.fail("run", err, c.json)
+	}
 
 	fresh, err := a.buildPlan(ctx, steps)
 	if err != nil {
@@ -309,17 +312,7 @@ func (a *App) cmdNext(args []string) int {
 		} else {
 			data.Command = "blog-bootstrap plan --json"
 		}
-		for _, step := range steps {
-			st := snap.Steps[step.ID()]
-			if st.Status != state.StatusVerified {
-				data.Step = step.ID()
-				data.Status = string(st.Status)
-				if st.ErrorCode != "" {
-					data.Status += " (" + st.ErrorCode + ")"
-				}
-				break
-			}
-		}
+		data.Step, data.Status = nextPending(steps, snap)
 	}
 	if c.json {
 		env := protocol.NewSuccess("next", data)
@@ -331,6 +324,40 @@ func (a *App) cmdNext(args []string) int {
 		fmt.Fprintf(a.Stdout, "步骤: %s (%s)\n", data.Step, data.Status)
 	}
 	return protocol.ExitOK
+}
+
+// nextPending picks the step an agent should work on. A failed required step
+// wins, then any unfinished required step, then optional steps.
+func nextPending(steps []run.Step, snap state.State) (string, string) {
+	type candidate struct{ id, status string }
+	var required, optional *candidate
+	for _, step := range steps {
+		st := snap.Steps[step.ID()]
+		if st.Status == state.StatusVerified {
+			continue
+		}
+		c := &candidate{id: step.ID(), status: string(st.Status)}
+		if st.ErrorCode != "" {
+			c.status += " (" + st.ErrorCode + ")"
+		}
+		if step.Required() {
+			if st.Status == state.StatusFailed || st.Status == state.StatusInvalid {
+				return c.id, c.status
+			}
+			if required == nil {
+				required = c
+			}
+		} else if optional == nil {
+			optional = c
+		}
+	}
+	if required != nil {
+		return required.id, required.status
+	}
+	if optional != nil {
+		return optional.id, optional.status
+	}
+	return "", ""
 }
 
 func (a *App) cmdVerify(args []string) int {
@@ -351,6 +378,14 @@ func (a *App) cmdVerify(args []string) int {
 	}
 	ctx, steps, err := a.prepare(c.configPath)
 	if err != nil {
+		return a.fail("verify", err, c.json)
+	}
+	fl, err := lock.Acquire(filepath.Join(ctx.BootstrapDir(), "run.lock"), ctx.State.Snapshot().RunID, a.now)
+	if err != nil {
+		return a.fail("verify", err, c.json)
+	}
+	defer func() { _ = fl.Release() }()
+	if err := a.reloadState(ctx); err != nil {
 		return a.fail("verify", err, c.json)
 	}
 
@@ -534,6 +569,17 @@ func (a *App) prepare(configPath string) (*core.Context, []run.Step, error) {
 		factory = steps.NewAll
 	}
 	return ctx, factory(ctx), nil
+}
+
+// reloadState re-reads the state file after the run lock is acquired so a
+// process that waited on the lock does not overwrite newer state from memory.
+func (a *App) reloadState(ctx *core.Context) error {
+	store, err := state.Open(ctx.StatePath(), a.now)
+	if err != nil {
+		return protocol.Fatal("STATE_READ_FAILED", "状态文件损坏或不可读: "+err.Error()).WithCause(err)
+	}
+	ctx.State = store
+	return nil
 }
 
 func (a *App) buildPlan(ctx *core.Context, stepList []run.Step) (*plan.Plan, error) {

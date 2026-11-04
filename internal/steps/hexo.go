@@ -17,7 +17,8 @@ import (
 )
 
 // HexoStep provisions the optional global hexo-cli. Build and verification
-// always use the project-local hexo instead.
+// always use the project-local hexo instead. The global CLI reports its own
+// version (hexo-cli 4.x), which is unrelated to the local hexo 7.x runtime.
 type HexoStep struct {
 	Ctx   *core.Context
 	Nodes *NodeStep
@@ -73,7 +74,7 @@ func (s *HexoStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	if err != nil {
 		return run.Inspection{}, err
 	}
-	if path != "" && version.Major == 7 {
+	if path != "" && version != nil {
 		return run.Inspection{Satisfied: true, Evidence: map[string]string{
 			"hexo_version": version.String(),
 			"hexo_path":    path,
@@ -82,7 +83,7 @@ func (s *HexoStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	actions := []plan.Action{{
 		Kind:   "npm_global",
 		Target: "hexo-cli",
-		Detail: "可选：安装/升级全局 hexo-cli 到 7.x；失败不阻断安装",
+		Detail: "可选：安装全局 hexo-cli；失败不阻断安装",
 	}}
 	return run.Inspection{Actions: actions}, nil
 }
@@ -122,11 +123,8 @@ func (s *HexoStep) Verify(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, asVerify(err)
 	}
-	if path == "" {
+	if path == "" || version == nil {
 		return nil, protocol.Verify("HEXO_MISSING", "未安装全局 hexo-cli（可选步骤）")
-	}
-	if version.Major != 7 {
-		return nil, protocol.Verify("VERSION_MISMATCH", "hexo 版本为 "+version.String()+"，期望 7.x")
 	}
 	return map[string]string{
 		"hexo_version": version.String(),

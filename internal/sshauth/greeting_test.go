@@ -160,6 +160,60 @@ func TestChooseEndpointFallsBackTo443(t *testing.T) {
 	}
 }
 
+func TestProbeArgsUseTemporaryKnownHosts(t *testing.T) {
+	fake := execx.NewFake()
+	m := manager(fake)
+	m.KnownHosts = "/tmp/probe-known_hosts"
+	if _, err := m.Greeting(context.Background(), Key{Path: "id"}, Endpoint{"github.com", 22}); err != nil {
+		t.Fatal(err)
+	}
+	calls := fake.CallsMatching("ssh")
+	if len(calls) == 0 {
+		t.Fatal("no ssh call recorded")
+	}
+	joined := strings.Join(calls[0].Args, " ")
+	if !strings.Contains(joined, "UserKnownHostsFile=/tmp/probe-known_hosts") {
+		t.Fatalf("args = %s", joined)
+	}
+}
+
+func TestChooseEndpointFromPrefersRecordedEndpoint(t *testing.T) {
+	fake := execx.NewFake()
+	fake.Handler = func(c execx.Call) execx.Result {
+		return execx.Result{ExitCode: 255, Stderr: "Permission denied (publickey)."}
+	}
+	m := manager(fake)
+	ep, err := m.ChooseEndpointFrom(context.Background(), Endpoint{"ssh.github.com", 443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Host != "ssh.github.com" || ep.Port != 443 {
+		t.Fatalf("endpoint = %+v", ep)
+	}
+	first := fake.CallsMatching("ssh")[0]
+	if !strings.HasSuffix(first.Args[len(first.Args)-1], "ssh.github.com") {
+		t.Fatalf("first probe = %v", first.Args)
+	}
+}
+
+func TestChooseEndpointFromFallsBackWhenRecordedEndpointFails(t *testing.T) {
+	fake := execx.NewFake()
+	fake.Handler = func(c execx.Call) execx.Result {
+		if strings.HasSuffix(c.Args[len(c.Args)-1], "ssh.github.com") {
+			return execx.Result{ExitCode: 255, Stderr: "ssh: connect to host ssh.github.com port 443: Connection refused"}
+		}
+		return execx.Result{ExitCode: 255, Stderr: "Permission denied (publickey)."}
+	}
+	m := manager(fake)
+	ep, err := m.ChooseEndpointFrom(context.Background(), Endpoint{"ssh.github.com", 443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Port != 22 {
+		t.Fatalf("endpoint = %+v, want fallback to 22", ep)
+	}
+}
+
 func TestChooseEndpointPrefers22(t *testing.T) {
 	fake := execx.NewFake()
 	fake.Handler = func(c execx.Call) execx.Result {

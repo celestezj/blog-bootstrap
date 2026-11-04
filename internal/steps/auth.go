@@ -187,14 +187,14 @@ func (s *AuthStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	if git != nil {
 		evidence["git_version"] = git.Version.String()
 	}
-	if git == nil || !toolchain.GitSupported(git.Version) {
+	gitReady := git != nil && toolchain.GitSupported(git.Version)
+	if !gitReady {
 		if manager, ok := s.Installer.Manager(ctx); ok {
 			actions = append(actions, plan.Action{Kind: "install_package", Target: manager + " git", Detail: "安装/升级 git"})
 		}
 		if s.Ctx.GOOS == "windows" {
 			actions = append(actions, plan.Action{Kind: "download", Target: "MinGit", Detail: "系统安装失败时使用便携 git"})
 		}
-		return run.Inspection{Actions: actions, Evidence: evidence}, nil
 	}
 	if ssh == nil {
 		actions = append(actions, plan.Action{Kind: "install_package", Target: "openssh-client", Detail: "安装 OpenSSH 客户端"})
@@ -203,6 +203,10 @@ func (s *AuthStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	evidence["ssh_version"] = ssh.Version.String()
 
 	mgr := s.manager(ctx, git, ssh)
+	if knownHosts, cleanup, khErr := sshauth.TempKnownHosts(); khErr == nil {
+		mgr.KnownHosts = knownHosts
+		defer cleanup()
+	}
 	endpoint, err := mgr.ChooseEndpoint(ctx)
 	if err != nil {
 		return run.Inspection{}, err
@@ -256,7 +260,7 @@ func (s *AuthStep) Inspect(ctx context.Context) (run.Inspection, error) {
 		evidence["fingerprint"] = s.fingerprint(ctx, *key)
 		evidence["greeting"] = "Hi " + s.Ctx.Config.Owner + "!"
 	}
-	satisfied := key != nil && !block.Changed
+	satisfied := gitReady && key != nil && !block.Changed
 	return run.Inspection{Satisfied: satisfied, Actions: actions, Evidence: evidence, Warning: warning}, nil
 }
 
@@ -382,7 +386,10 @@ func (s *AuthStep) Verify(ctx context.Context) (map[string]string, error) {
 	mgr := s.manager(ctx, git, ssh)
 
 	host, port := endpointParts(s.Ctx.State.Snapshot().Endpoint)
-	endpoint := sshauth.Endpoint{Host: host, Port: port}
+	endpoint, err := mgr.ChooseEndpointFrom(ctx, sshauth.Endpoint{Host: host, Port: port})
+	if err != nil {
+		return nil, asVerify(err)
+	}
 	block, err := sshauth.PreviewHostBlock(configPath(s.Ctx), s.Ctx.Config.Alias, endpoint.Host, endpoint.Port, s.Ctx.Config.KeyPath)
 	if err != nil {
 		return nil, asVerify(err)

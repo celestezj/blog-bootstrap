@@ -24,8 +24,12 @@ switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
 
 $tag = $env:BLOG_BOOTSTRAP_VERSION
 if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq "latest") {
+    if ($repo -notmatch '^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$') {
+        throw "无法从 $repo 解析最新版本；请设置 BLOG_BOOTSTRAP_VERSION=vX.Y.Z"
+    }
+    $apiRepo = "$($Matches[1])/$($Matches[2])"
     $release = Invoke-RestMethod -UseBasicParsing `
-        -Uri "https://api.github.com/repos/celestezj/blog-bootstrap/releases/latest" `
+        -Uri "https://api.github.com/repos/$apiRepo/releases/latest" `
         -Headers @{ "User-Agent" = "blog-bootstrap-install" }
     $tag = $release.tag_name
 }

@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/celestezj/blog-bootstrap/internal/atomicfile"
 	"github.com/celestezj/blog-bootstrap/internal/protocol"
 )
 
@@ -40,7 +39,11 @@ func Acquire(path, runID string, now func() time.Time) (*FileLock, error) {
 	if err := os.MkdirAll(dirOf(path), 0o755); err != nil {
 		return nil, err
 	}
-	if err := createExclusive(path, info); err != nil {
+	for attempt := 0; attempt < 3; attempt++ {
+		err := createExclusive(path, info)
+		if err == nil {
+			return &FileLock{path: path, info: info}, nil
+		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
@@ -57,12 +60,28 @@ func Acquire(path, runID string, now func() time.Time) (*FileLock, error) {
 					WithDetails(map[string]string{"pid": strconv.Itoa(existing.PID), "hostname": existing.Hostname})
 			}
 		}
-		// Stale or unreadable lock: take it over.
-		if err := write(path, info); err != nil {
-			return nil, err
+		if readErr != nil {
+			// A fresh but incomplete file is another process mid-create, not a
+			// stale lock. Only corrupt locks older than the grace period are
+			// taken over.
+			if st, statErr := os.Stat(path); statErr == nil && now().Sub(st.ModTime()) < 2*time.Second {
+				return nil, protocol.Retry("LOCK_HELD", "锁文件正在被其他进程创建，请稍后重试")
+			}
 		}
+		// Stale or unreadable lock: atomically claim the file by renaming it
+		// away, then retry the exclusive create. Only one process can win the
+		// rename, so concurrent takeovers cannot both proceed.
+		claimed := fmt.Sprintf("%s.stale.%d.%d.%d", path, os.Getpid(), now().UnixNano(), attempt)
+		if renameErr := os.Rename(path, claimed); renameErr != nil {
+			if errors.Is(renameErr, os.ErrNotExist) {
+				continue
+			}
+			return nil, protocol.Retry("LOCK_HELD", "无法接管锁文件: "+renameErr.Error()).
+				WithCause(renameErr)
+		}
+		_ = os.Remove(claimed)
 	}
-	return &FileLock{path: path, info: info}, nil
+	return nil, protocol.Retry("LOCK_HELD", "无法获取锁：锁文件正在被其他进程接管")
 }
 
 // Release removes the lock only when it still belongs to this run.
@@ -98,14 +117,6 @@ func createExclusive(path string, info Info) error {
 	}
 	_, err = f.Write(append(data, '\n'))
 	return err
-}
-
-func write(path string, info Info) error {
-	data, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicfile.Write(path, append(data, '\n'), 0o600)
 }
 
 func read(path string) (Info, error) {

@@ -120,7 +120,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 |---|---|
 | git | `git --version` 达标；`ssh -T` 输出 `Hi <account>!`；源仓库可读；部署仓库 `push --dry-run` 通过 |
 | node | `node -v` 与 `npm -v` 在支持的版本区间 |
-| hexo | `hexo version` 返回 7.x（可选步骤） |
+| hexo | 全局 `hexo-cli` 可执行并返回版本号（可选步骤；构建使用项目内 hexo） |
 | clone | remote 匹配配置；分支正确；`git submodule status` 无前导 `-`；主题 HEAD 等于 gitlink |
 | preview | `public/index.html` 与 `public/search.json` 存在；本地 server 返回 HTTP 200；进程已回收 |
 

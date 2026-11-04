@@ -89,6 +89,14 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 
 		insp, err := step.Inspect(ctx)
 		if err != nil {
+			if !step.Required() {
+				sr.Status = "skipped"
+				sr.Message = "可选步骤检查失败，已跳过: " + err.Error()
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s 可选步骤检查失败，已跳过: %v", step.ID(), err))
+				_ = e.markSkipped(step.ID(), err)
+				rep.Steps = append(rep.Steps, sr)
+				continue
+			}
 			sr.Status = "failed"
 			sr.Message = err.Error()
 			rep.Steps = append(rep.Steps, sr)

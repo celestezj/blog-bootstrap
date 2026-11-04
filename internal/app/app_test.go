@@ -13,8 +13,10 @@ import (
 
 	"github.com/celestezj/blog-bootstrap/internal/core"
 	"github.com/celestezj/blog-bootstrap/internal/execx"
+	"github.com/celestezj/blog-bootstrap/internal/lock"
 	"github.com/celestezj/blog-bootstrap/internal/protocol"
 	"github.com/celestezj/blog-bootstrap/internal/run"
+	"github.com/celestezj/blog-bootstrap/internal/state"
 )
 
 const testConfig = `version: 1
@@ -47,6 +49,11 @@ func (f *fakeStep) Verify(context.Context) (map[string]string, error) {
 
 func newTestApp(t *testing.T, step *fakeStep) (*App, string) {
 	t.Helper()
+	return newTestAppWithSteps(t, step)
+}
+
+func newTestAppWithSteps(t *testing.T, steps ...run.Step) (*App, string) {
+	t.Helper()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "blog-setup.yml")
 	if err := os.WriteFile(cfgPath, []byte(testConfig), 0o600); err != nil {
@@ -66,7 +73,7 @@ func newTestApp(t *testing.T, step *fakeStep) (*App, string) {
 		Now:     func() time.Time { return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC) },
 		Sleep:   func(time.Duration) {},
 		StepsFactory: func(*core.Context) []run.Step {
-			return []run.Step{step}
+			return steps
 		},
 	}, cfgPath
 }
@@ -218,5 +225,65 @@ func TestUnknownStep(t *testing.T) {
 	}
 	if !strings.Contains(a.Stdout.(*bytes.Buffer).String(), `"code": "UNKNOWN_STEP"`) {
 		t.Fatalf("missing UNKNOWN_STEP: %s", a.Stdout.(*bytes.Buffer).String())
+	}
+}
+
+func TestVerifyRespectsRunLock(t *testing.T) {
+	step := &fakeStep{id: "fake", required: true, verify: map[string]string{"probe": "ok"}}
+	a, cfgPath := newTestApp(t, step)
+	held, err := lock.Acquire(filepath.Join(filepath.Dir(cfgPath), ".bootstrap", "run.lock"), "other", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+
+	exit := a.Run([]string{"verify", "--step", "fake", "--config", cfgPath, "--json"})
+	if exit != protocol.ExitRetry {
+		t.Fatalf("exit = %d, want %d; output:\n%s", exit, protocol.ExitRetry, a.Stdout.(*bytes.Buffer).String())
+	}
+	if !strings.Contains(a.Stdout.(*bytes.Buffer).String(), `"code": "LOCK_HELD"`) {
+		t.Fatalf("missing LOCK_HELD: %s", a.Stdout.(*bytes.Buffer).String())
+	}
+}
+
+func TestNextPrefersFailedRequiredStep(t *testing.T) {
+	a, cfgPath := newTestAppWithSteps(t,
+		&fakeStep{id: "auth.ssh", required: true},
+		&fakeStep{id: "hexo", required: false},
+		&fakeStep{id: "workspace", required: true},
+	)
+	now := a.Now()
+	store, err := state.Open(filepath.Join(filepath.Dir(cfgPath), ".bootstrap", "state.json"), a.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, st := range map[string]state.StepState{
+		"auth.ssh":  {Status: state.StatusVerified, UpdatedAt: now},
+		"hexo":      {Status: state.StatusSkipped, UpdatedAt: now},
+		"workspace": {Status: state.StatusFailed, UpdatedAt: now, ErrorCode: "REPO_CONFLICT"},
+	} {
+		if err := store.SetStep(id, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	exit := a.Run([]string{"next", "--config", cfgPath, "--json"})
+	if exit != protocol.ExitOK {
+		t.Fatalf("exit = %d; output:\n%s", exit, a.Stdout.(*bytes.Buffer).String())
+	}
+	var env struct {
+		Data struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(a.Stdout.(*bytes.Buffer).Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Step != "workspace" {
+		t.Fatalf("next step = %q, want workspace (failed required step must win)", env.Data.Step)
+	}
+	if !strings.Contains(env.Data.Status, "REPO_CONFLICT") {
+		t.Fatalf("status = %q", env.Data.Status)
 	}
 }

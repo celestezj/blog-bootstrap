@@ -143,6 +143,9 @@ func (c *Config) Validate() error {
 	if c.Auth.Alias != "" && !aliasRE.MatchString(c.Auth.Alias) {
 		return protocol.Fatal("CONFIG_INVALID", fmt.Sprintf("auth.alias %q 不是合法的 SSH 别名", c.Auth.Alias))
 	}
+	if strings.ContainsAny(c.Auth.Key, "\r\n\"\x00") {
+		return protocol.Fatal("CONFIG_INVALID", "auth.key 不能包含换行、双引号或空字符")
+	}
 	if c.Toolchain.Strategy != "" && c.Toolchain.Strategy != "system_first" && c.Toolchain.Strategy != "isolated" {
 		return protocol.Fatal("CONFIG_INVALID", "toolchain.strategy 只能是 system_first 或 isolated")
 	}

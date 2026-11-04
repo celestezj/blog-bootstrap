@@ -209,6 +209,26 @@ func TestOptionalStepFailureDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestOptionalInspectErrorDoesNotBlock(t *testing.T) {
+	ctx, _ := newCtx(t)
+	co, cr := &counters{}, &counters{}
+	optional := &fakeStep{id: "hexo", required: false, c: co, inspectE: errors.New("probe failed")}
+	required := &fakeStep{id: "node", required: true, c: cr}
+	rep, err := run.NewEngine(ctx, optional, required).Run(context.Background())
+	if err != nil {
+		t.Fatalf("optional inspect failure must not block: %v", err)
+	}
+	if rep.Receipt == nil {
+		t.Fatal("receipt expected")
+	}
+	if len(rep.Warnings) == 0 {
+		t.Fatal("expected a warning for the optional step")
+	}
+	if ctx.State.Snapshot().Steps["hexo"].Status != state.StatusSkipped {
+		t.Fatal("optional step should be skipped")
+	}
+}
+
 func TestInspectErrorStops(t *testing.T) {
 	ctx, _ := newCtx(t)
 	c := &counters{}
