@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "command": "verify",
+  "error": {
+    "code": "NETWORK_UNREACHABLE",
+    "message": "GitHub 不可达",
+    "retryable": true
+  },
+  "next_action": {
+    "type": "retry",
+    "code": "NETWORK_UNREACHABLE",
+    "message": "GitHub 不可达"
+  }
+}

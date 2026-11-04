@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "command": "verify",
+  "error": {
+    "code": "REPO_CONFLICT",
+    "message": "目标目录属于其他仓库",
+    "retryable": false
+  },
+  "next_action": {
+    "type": "abort",
+    "code": "REPO_CONFLICT",
+    "message": "目标目录属于其他仓库"
+  }
+}

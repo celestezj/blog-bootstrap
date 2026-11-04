@@ -1,0 +1,27 @@
+version: 1
+
+repos:
+  source: "git@github.com:<your-account>/blog-delta.git"
+  theme: "git@github.com:<your-account>/hexo-theme-A4.git"
+  deploy: "git@github.com:<your-account>/<your-account>.github.io.git"
+
+git_identity: # 仅在本机没有全局 user.name/email 时写入；已有全局身份不会被覆盖
+  name: "<your-name>"
+  email: "<your-email>"
+
+auth:
+  # SSH 主机别名：远程地址中的 github.com 会被替换成它。
+  #   git@github.com:<account>/blog-delta.git
+  #   -> git@<alias>:<account>/blog-delta.git
+  # 省略时默认使用 repos 解析出的账号名。
+  alias: "<your-account>"
+  # 专用私钥路径。省略时为 ~/.ssh/id_ed25519_<account>。
+  key: "~/.ssh/id_ed25519_<your-account>"
+
+toolchain: # 可选
+  strategy: system_first # system_first | isolated
+  node_version: "22"     # 可省略；clone 后以 .node-version 为准
+
+workspace: # 可选
+  dir: ./blog-delta      # 可省略；默认取源仓库名
+  branch: master         # 可省略

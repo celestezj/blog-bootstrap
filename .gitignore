@@ -1,0 +1,8 @@
+/dist/
+/blog-bootstrap
+/blog-bootstrap.exe
+/.bootstrap/
+blog-setup.yml
+*.log
+.DS_Store
+Thumbs.db

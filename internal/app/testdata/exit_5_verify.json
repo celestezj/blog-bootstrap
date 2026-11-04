@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "command": "verify",
+  "error": {
+    "code": "THEME_MISMATCH",
+    "message": "主题 HEAD 与父仓库 gitlink 不一致",
+    "retryable": false
+  },
+  "next_action": {
+    "type": "abort",
+    "code": "THEME_MISMATCH",
+    "message": "主题 HEAD 与父仓库 gitlink 不一致"
+  }
+}

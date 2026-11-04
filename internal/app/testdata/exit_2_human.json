@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "command": "verify",
+  "error": {
+    "code": "AUTH_KEY_NOT_ADDED",
+    "message": "公钥尚未在 GitHub 生效",
+    "retryable": false
+  },
+  "next_action": {
+    "type": "human",
+    "code": "AUTH_KEY_NOT_ADDED",
+    "open_url": "https://github.com/settings/ssh/new?title=blog-bootstrap",
+    "message": "请在浏览器中确认已登录目标账号，点击 Add SSH key。",
+    "expected": "Hi celestezj!",
+    "poll": {
+      "command": "blog-bootstrap verify --step auth.ssh --json",
+      "interval_seconds": 5,
+      "timeout_seconds": 180
+    }
+  }
+}
