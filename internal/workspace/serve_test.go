@@ -154,6 +154,33 @@ func TestSmokeTimeoutKillsTree(t *testing.T) {
 	}
 }
 
+func TestSmokeReportsStartupProgress(t *testing.T) {
+	proc := newFakeProcess()
+	starter := &fakeStarter{procs: []*fakeProcess{proc}}
+	picker := &fakePicker{ports: []int{4001}}
+	var notes []string
+	server := &Server{
+		Starter:  starter,
+		Ports:    picker,
+		Probe:    func(context.Context, string) (int, error) { return 500, nil },
+		Wait:     fastWait,
+		Interval: time.Millisecond,
+		MaxPolls: 80,
+		Attempts: 1,
+		Notify:   func(line string) { notes = append(notes, line) },
+	}
+	_, err := server.Smoke(context.Background(), t.TempDir(), "node", "hexo.js")
+	if pe := protocol.As(err); pe == nil || pe.Code != "PREVIEW_TIMEOUT" {
+		t.Fatalf("err = %v", err)
+	}
+	joined := strings.Join(notes, "\n")
+	for _, want := range []string{"启动临时 hexo server", "仍在等待预览服务就绪"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("notifications missing %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestSmokeDetectsEarlyExit(t *testing.T) {
 	proc := newFakeProcess()
 	proc.output = "listen EADDRINUSE 127.0.0.1:4001"

@@ -44,10 +44,18 @@ type Server struct {
 	Logger  *core.Logger
 	StepID  string
 	Wait    func(time.Duration)
+	// Notify receives human-facing progress while the server starts.
+	Notify func(string)
 
 	Interval time.Duration
 	MaxPolls int
 	Attempts int
+}
+
+func (s *Server) notify(format string, args ...interface{}) {
+	if s.Notify != nil {
+		s.Notify(fmt.Sprintf(format, args...))
+	}
 }
 
 func (s *Server) starter() Starter {
@@ -100,7 +108,9 @@ func (s *Server) Smoke(ctx context.Context, dir, nodePath, hexoMain string) (map
 	}
 	maxPolls := s.MaxPolls
 	if maxPolls <= 0 {
-		maxPolls = 120
+		// hexo server regenerates the site on startup; hexo-all-minifier on a
+		// large blog can take minutes before the port is listening.
+		maxPolls = 1200
 	}
 	interval := s.Interval
 	if interval <= 0 {
@@ -117,6 +127,7 @@ func (s *Server) Smoke(ctx context.Context, dir, nodePath, hexoMain string) (map
 			continue
 		}
 		url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+		s.notify("启动临时 hexo server（%s）；首次启动会重新生成站点，可能需要 1-3 分钟...", url)
 		spec := ProcessSpec{
 			Dir:  dir,
 			Env:  s.Env,
@@ -181,6 +192,10 @@ func (s *Server) poll(ctx context.Context, proc Process, url string, maxPolls in
 			detail = err.Error()
 		} else {
 			detail = fmt.Sprintf("HTTP %d", status)
+		}
+		if (i+1)%40 == 0 {
+			s.notify("仍在等待预览服务就绪（已检查 %d 次，约 %d 秒，最后状态: %s）",
+				i+1, int((time.Duration(i+1) * interval).Seconds()), detail)
 		}
 		s.wait(interval)
 	}

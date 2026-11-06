@@ -231,6 +231,8 @@ blog-bootstrap verify --strict --json
 - 下载便携工具时，每 2 秒报告已下载字节和百分比；
 - `npm ci`、`hexo generate`、临时 server 等耗时阶段开始/结束提示。
 
+临时 `hexo server` 启动时会重新生成一次站点（`hexo-all-minifier` 处理图片可能较慢），通常需要几十秒到几分钟；等待期间每约 10 秒打印一次检查次数和耗时，最多等待 5 分钟，超时会给出日志路径。
+
 `auth.ssh` 需要登记公钥时，终端会依次打印：
 
 1. 当前要登录的 GitHub 账号；

@@ -60,6 +60,7 @@ func (s *PreviewStep) server(rt *nodeRuntime) *workspace.Server {
 		Logger: s.Ctx.Logger,
 		StepID: "preview",
 		Wait:   s.Ctx.Wait,
+		Notify: func(line string) { s.Ctx.Sayf("  %s", line) },
 	}
 }
 
