@@ -46,12 +46,12 @@
 
 ```
 读取配置文件 → config.Resolve（校验 + 默认值 + 绝对路径）
-           → state.Open(<workspace>/.bootstrap/state.json)
+           → state.Open(<config dir>/.bootstrap/state.json)
            → 构造 core.Context
            → steps.NewAll(ctx) 生成步骤列表
 ```
 
-配置中的相对路径在这里锚定到**配置文件所在目录**，状态和日志锚定到解析后的 `workspace.dir`。
+配置中的相对路径、状态、日志和便携工具都锚定到**配置文件所在目录**（`Resolved.BaseDir`）。`workspace.dir` 只是它解析出的子目录，`.bootstrap` 不在其中，二者通常平级。
 
 ### plan
 
@@ -159,7 +159,7 @@ Engine 输出步骤序号、动作列表、执行/验证状态；步骤实现输
 
 ### state.json
 
-位于 `<workspace>/.bootstrap/state.json`，由 `state.Store` 管理：
+位于 `<config dir>/.bootstrap/state.json`（配置文件所在目录），由 `state.Store` 管理：
 
 - `run_id`、`plan_hash`；
 - 每步状态：`pending` / `applied` / `verified` / `failed` / `invalid` / `skipped`；

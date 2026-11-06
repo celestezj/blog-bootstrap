@@ -253,7 +253,7 @@ blog-bootstrap verify --strict --json
 机制：
 
 1. **每一步执行前重新 Inspect。** 已装好的 git 会被识别并跳过；半完成步骤只补剩余动作；已 clone 的仓库会校验 remote、分支、子模块。
-2. **状态文件记录辅助信息。** `<workspace>/.bootstrap/state.json` 保存工具绝对路径、便携工具位置、SSH endpoint、别名、步骤证据和收据。即使删掉它也能靠现场探测续跑，但会丢失这些缓存。
+2. **状态文件记录辅助信息。** `<配置目录>/.bootstrap/state.json`（配置文件所在目录，不是 `workspace.dir`）保存工具绝对路径、便携工具位置、SSH endpoint、别名、步骤证据和收据。即使删掉它也能靠现场探测续跑，但会丢失这些缓存。
 3. **崩溃后的锁恢复。** 进程被杀留下的 `run.lock`，下次启动检测到 PID 不存在会自动接管。
 
 注意：安装 git 后环境已变化，旧 consent hash 会失效。第二次必须重新 `plan` 拿新 hash：
@@ -298,7 +298,7 @@ blog-bootstrap verify --strict --json
 
 ## 9. 文件与日志
 
-相对于解析后的工作目录（`workspace.dir`）：
+相对于**配置文件所在目录**（`--config` 指向的 `blog-setup.yml` 所在目录，不是 `workspace.dir`）。`workspace.dir` 是它下面的子目录，因此 `.bootstrap` 与博客仓库通常平级：
 
 | 路径 | 内容 |
 |---|---|
@@ -336,6 +336,36 @@ blog-bootstrap verify --strict --json
 
 **Q：会帮我 commit、push 或 deploy 吗？**
 不会。安装流程不包含发布；写权限只用 `git push --dry-run` 探测。
+
+**Q：安装成功后，新窗口里 `node` / `npm` 找不到怎么办？**
+安装器有意不修改系统 PATH。如果使用的是便携版 Node，它位于 `<配置目录>/.bootstrap/tools/node/`（`<配置目录>` 是 `blog-setup.yml` 所在目录，也就是 `.bootstrap` 的父目录，不是 `workspace.dir`），只通过状态文件里的绝对路径调用。
+
+不要照抄其他机器上的路径，从状态文件读取：
+
+```powershell
+(Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json).paths
+```
+
+在博客仓库目录（`workspace.dir`，npm 需要读到 `package.json`）下，用 PowerShell 临时把便携 Node 加进 PATH：
+
+```powershell
+$state = Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json
+$env:Path = "$(Split-Path $state.paths.node);$env:Path"
+where.exe node
+npm run preview
+```
+
+cmd 下先查出目录，再设置（同样不要写死机器相关的路径）：
+
+```bat
+powershell -NoProfile -Command "(Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json).paths.node"
+set "NODE_DIR=<上一条命令输出的目录，去掉末尾的 \node.exe>"
+set "PATH=%NODE_DIR%;%PATH%"
+where node
+npm run preview
+```
+
+这些改动只作用于当前终端窗口。`preview` 等脚本内部会调用裸命令 `node`，所以只用绝对路径执行 `node.exe` 不够，必须让 Node 目录进入 PATH。要让 `npm` 全局可用，需另外安装系统版 Node.js，与安装器无关。
 
 ## 11. 安全边界
 
