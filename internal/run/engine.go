@@ -31,6 +31,11 @@ type Step interface {
 	Verify(ctx context.Context) (map[string]string, error)
 }
 
+// Finalizer runs once after a fully successful Run. Verify never calls it.
+type Finalizer interface {
+	Finalize(ctx context.Context) (warnings []string, err error)
+}
+
 // StepReport is the per-step result exposed in JSON.
 type StepReport struct {
 	ID       string            `json:"id"`

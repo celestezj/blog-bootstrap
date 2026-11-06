@@ -22,6 +22,7 @@
 - [x] 3.3 实现便携 git/Node 下载、SHA256 校验、解压与绝对路径记录。验证：测试覆盖校验失败删除文件、校验成功写入状态。
 - [x] 3.4 实现 `.node-version` 对账与 `npm ci` 缓存键。验证：测试覆盖版本一致跳过、版本不一致改用便携 Node、lockfile 哈希变化触发重装。
 - [x] 3.5 处理 Windows `.cmd` shim、UTF-8 控制台和非 TTY 提权。验证：Windows 冒烟测试成功调用 npm/hexo；非 TTY 下需要提权时返回 `human_required`。
+- [x] 3.6 实现便携 Node 的用户级 PATH 持久化：`plan` 展示 `update_user_path` 动作，`run` 成功后执行 finalize 写入 `HKCU\Environment\Path` 并记录 `changes.json`，`verify` 不修改 PATH。验证：`internal/userpath` 单元测试覆盖前置、去重、旧版本清理与幂等；`NodeStep` 测试覆盖便携/系统 Node、Windows/非 Windows；`cmdRun` 测试覆盖 finalize 调用、失败降级为 warning、verify 不调用 finalize。
 
 ## 4. SSH 鉴权
 

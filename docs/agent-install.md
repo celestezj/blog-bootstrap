@@ -150,3 +150,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 - 所有外部命令通过 argv 调用，不经过 shell。
 - 不收集遥测；只访问 GitHub、nodejs.org 和系统包管理器。
 - plan 是唯一的改动授权。AI 必须先把 plan 展示给用户，取得同意后再传 plan hash。
+- `run` 成功后会自动更新 Windows 用户级 PATH（`HKCU\Environment\Path`），把便携版 Node 目录前置并清理旧条目；该动作在 plan 的 `update_user_path` 中展示、由 consent hash 覆盖。AI 不得改用 `setx` 等手工命令，`verify` 永不修改 PATH。

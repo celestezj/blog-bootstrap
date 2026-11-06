@@ -11,8 +11,10 @@ import (
 	"github.com/celestezj/blog-bootstrap/internal/config"
 	"github.com/celestezj/blog-bootstrap/internal/core"
 	"github.com/celestezj/blog-bootstrap/internal/execx"
+	"github.com/celestezj/blog-bootstrap/internal/plan"
 	"github.com/celestezj/blog-bootstrap/internal/state"
 	"github.com/celestezj/blog-bootstrap/internal/toolchain"
+	"github.com/celestezj/blog-bootstrap/internal/userpath"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -221,5 +223,180 @@ func TestPreviewReinstallsWhenLockfileChanges(t *testing.T) {
 	}
 	if ciCalls != 1 {
 		t.Fatalf("unchanged lockfile must skip npm ci; calls = %d", ciCalls)
+	}
+}
+
+type fakeUserPathStore struct {
+	value  userpath.Value
+	err    error
+	writes []userpath.Value
+}
+
+func (f *fakeUserPathStore) Read() (userpath.Value, error) {
+	if f.err != nil {
+		return userpath.Value{}, f.err
+	}
+	return f.value, nil
+}
+
+func (f *fakeUserPathStore) Write(v userpath.Value) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.value = v
+	f.writes = append(f.writes, v)
+	return nil
+}
+
+func portableSatisfiedContext(t *testing.T) (*core.Context, string) {
+	t.Helper()
+	dir := t.TempDir()
+	ctx := testContext(t, dir, nil)
+	writeFile(t, filepath.Join(dir, ".node-version"), "20.18.1\n")
+	spec, err := toolchain.NodeSpec("windows", "amd64", "20.18.1", ctx.ToolsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	portableNode := fakeNodeInstall(t, spec.InstallDir, "20.18.1")
+	ctx.Runner = nodeRunner("", "", portableNode, "20.18.1")
+	if err := ctx.State.SetPaths(func(p *state.Paths) { p.Node = portableNode }); err != nil {
+		t.Fatal(err)
+	}
+	return ctx, portableNode
+}
+
+func hasAction(actions []plan.Action, kind string) bool {
+	for _, a := range actions {
+		if a.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func TestInspectPlansUserPathForPortableNode(t *testing.T) {
+	ctx, portableNode := portableSatisfiedContext(t)
+	store := &fakeUserPathStore{value: userpath.Value{Raw: `C:\Windows`}}
+	ctx.UserPath = store
+	step := newNodeStep(t, ctx)
+
+	insp, err := step.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !insp.Satisfied {
+		t.Fatal("expected satisfied")
+	}
+	if !hasAction(insp.Actions, "update_user_path") {
+		t.Fatalf("actions = %+v", insp.Actions)
+	}
+
+	dir := filepath.Dir(portableNode)
+	store.value = userpath.Value{Raw: dir + `;C:\Windows`}
+	insp, err = step.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasAction(insp.Actions, "update_user_path") {
+		t.Fatalf("unexpected action when PATH is ready: %+v", insp.Actions)
+	}
+}
+
+func TestInspectSkipsUserPathForSystemNode(t *testing.T) {
+	dir := t.TempDir()
+	ctx := testContext(t, dir, nil)
+	writeFile(t, filepath.Join(dir, ".node-version"), "20.18.1\n")
+	systemNode := fakeNodeInstall(t, filepath.Join(dir, "system"), "20.18.1")
+	ctx.Runner = nodeRunner(systemNode, "20.18.1", "", "")
+	if err := ctx.State.SetPaths(func(p *state.Paths) { p.Node = systemNode }); err != nil {
+		t.Fatal(err)
+	}
+	ctx.UserPath = &fakeUserPathStore{value: userpath.Value{Raw: `C:\Windows`}}
+
+	insp, err := newNodeStep(t, ctx).Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !insp.Satisfied {
+		t.Fatal("expected satisfied")
+	}
+	if hasAction(insp.Actions, "update_user_path") {
+		t.Fatalf("system node must not touch user PATH: %+v", insp.Actions)
+	}
+}
+
+func TestUserPathActionIsWindowsOnly(t *testing.T) {
+	ctx, portableNode := portableSatisfiedContext(t)
+	ctx.GOOS = "darwin"
+	step := newNodeStep(t, ctx)
+	rt := &nodeRuntime{Node: &toolchain.Tool{Path: portableNode}}
+	if act := step.userPathAction(rt, true); act != nil {
+		t.Fatalf("action = %+v", act)
+	}
+}
+
+func TestFinalizePrependsPortableNodeToUserPath(t *testing.T) {
+	ctx, portableNode := portableSatisfiedContext(t)
+	store := &fakeUserPathStore{value: userpath.Value{Raw: `C:\Windows`, Expand: true}}
+	ctx.UserPath = store
+	step := newNodeStep(t, ctx)
+
+	warns, err := step.Finalize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("warnings = %v", warns)
+	}
+	dir := filepath.Dir(portableNode)
+	if want := dir + `;C:\Windows`; store.value.Raw != want {
+		t.Fatalf("raw = %q, want %q", store.value.Raw, want)
+	}
+	if !store.value.Expand {
+		t.Fatal("registry value type must be preserved")
+	}
+	snap := ctx.State.Snapshot()
+	if len(snap.Changes.UserPath) != 1 {
+		t.Fatalf("changes = %+v", snap.Changes.UserPath)
+	}
+	if added := snap.Changes.UserPath[0].Added; len(added) != 1 || added[0] != dir {
+		t.Fatalf("added = %v", added)
+	}
+}
+
+func TestFinalizeIgnoresSystemNode(t *testing.T) {
+	dir := t.TempDir()
+	ctx := testContext(t, dir, nil)
+	systemNode := fakeNodeInstall(t, filepath.Join(dir, "system"), "20.18.1")
+	if err := ctx.State.SetPaths(func(p *state.Paths) { p.Node = systemNode }); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeUserPathStore{value: userpath.Value{Raw: `C:\Windows`}}
+	ctx.UserPath = store
+
+	if _, err := newNodeStep(t, ctx).Finalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("system node must not write PATH: %+v", store.writes)
+	}
+}
+
+func TestFinalizeSkipsShellEditsOnNonWindows(t *testing.T) {
+	ctx, _ := portableSatisfiedContext(t)
+	ctx.GOOS = "darwin"
+	store := &fakeUserPathStore{value: userpath.Value{Raw: `/usr/bin`}}
+	ctx.UserPath = store
+	var lines []string
+	ctx.Progress = func(line string) { lines = append(lines, line) }
+
+	if _, err := newNodeStep(t, ctx).Finalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("must not edit shell rc/PATH: %+v", store.writes)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "仅支持 Windows") {
+		t.Fatalf("missing guidance: %v", lines)
 	}
 }

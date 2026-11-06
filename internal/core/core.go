@@ -14,6 +14,7 @@ import (
 	"github.com/celestezj/blog-bootstrap/internal/config"
 	"github.com/celestezj/blog-bootstrap/internal/execx"
 	"github.com/celestezj/blog-bootstrap/internal/state"
+	"github.com/celestezj/blog-bootstrap/internal/userpath"
 )
 
 // Browser opens a URL in the user's browser via argv, never a shell.
@@ -37,6 +38,7 @@ type Context struct {
 	Runner       execx.Runner
 	HTTP         *http.Client
 	Browser      Browser
+	UserPath     userpath.Store
 	Logger       *Logger
 
 	GOOS   string

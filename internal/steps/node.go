@@ -13,6 +13,7 @@ import (
 	"github.com/celestezj/blog-bootstrap/internal/run"
 	"github.com/celestezj/blog-bootstrap/internal/state"
 	"github.com/celestezj/blog-bootstrap/internal/toolchain"
+	"github.com/celestezj/blog-bootstrap/internal/userpath"
 	"github.com/celestezj/blog-bootstrap/internal/workspace"
 )
 
@@ -149,13 +150,23 @@ func (s *NodeStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	if npm != nil {
 		evidence["npm_version"] = npm.Version.String()
 	}
-	if _, ok, err := s.current(ctx); err != nil {
+	rt, ok, err := s.current(ctx)
+	if err != nil {
 		return run.Inspection{}, err
-	} else if ok {
-		return run.Inspection{Satisfied: true, Evidence: evidence}, nil
+	}
+	pathAction := s.userPathAction(rt, ok)
+	if ok {
+		insp := run.Inspection{Satisfied: true, Evidence: evidence}
+		if pathAction != nil {
+			insp.Actions = []plan.Action{*pathAction}
+		}
+		return insp, nil
 	}
 
 	actions := []plan.Action{}
+	if pathAction != nil {
+		actions = append(actions, *pathAction)
+	}
 	warning := ""
 	mismatch := node != nil && (!toolchain.NodeSupported(node.Version) || !toolchain.MatchWant(want, node.Version))
 	if mismatch {
@@ -183,6 +194,49 @@ func (s *NodeStep) Inspect(ctx context.Context) (run.Inspection, error) {
 		})
 	}
 	return run.Inspection{Actions: actions, Evidence: evidence, Warning: warning}, nil
+}
+
+// managedNodeRoot is the toolchain directory the installer owns.
+func (s *NodeStep) managedNodeRoot() string {
+	return filepath.Join(s.Ctx.ToolsDir(), "node")
+}
+
+// userPathAction describes the end-of-run user PATH update when the resolved
+// runtime is (or may fall back to) a portable Node under our tools directory.
+func (s *NodeStep) userPathAction(rt *nodeRuntime, satisfied bool) *plan.Action {
+	if s.Ctx.GOOS != "windows" {
+		return nil
+	}
+	root := s.managedNodeRoot()
+	dir := ""
+	if satisfied && rt != nil {
+		if !userpath.Within(root, rt.Node.Path) {
+			return nil
+		}
+		dir = filepath.Dir(rt.Node.Path)
+		if s.userPathReady(root, dir) {
+			return nil
+		}
+	}
+	detail := "将项目内便携 Node.js 目录前置到用户级 PATH，并清理旧版本条目；新终端生效"
+	if !satisfied {
+		detail = "若最终使用项目内便携 Node.js（系统安装失败或版本不匹配），将把其目录前置到用户级 PATH；新终端生效"
+	}
+	if dir != "" {
+		detail += "（" + dir + "）"
+	}
+	return &plan.Action{Kind: "update_user_path", Target: `HKCU\Environment\Path`, Detail: detail}
+}
+
+func (s *NodeStep) userPathReady(root, dir string) bool {
+	if s.Ctx.UserPath == nil {
+		return false
+	}
+	v, err := s.Ctx.UserPath.Read()
+	if err != nil {
+		return false
+	}
+	return userpath.ManagedReady(v.Raw, root, dir)
 }
 
 func (s *NodeStep) portableAction(reason string) plan.Action {
@@ -289,6 +343,56 @@ func (s *NodeStep) storePaths(rt *nodeRuntime) error {
 		p.Node = rt.Node.Path
 		p.Npm = rt.Npm.Path
 	})
+}
+
+// Finalize runs after a successful run only: it persists the portable Node
+// directory in the user-level PATH so new terminals can use node and npm.
+func (s *NodeStep) Finalize(ctx context.Context) ([]string, error) {
+	root := s.managedNodeRoot()
+	nodePath := s.Ctx.State.Snapshot().Paths.Node
+	if nodePath == "" {
+		if rt, ok, err := s.current(ctx); err == nil && ok {
+			nodePath = rt.Node.Path
+		}
+	}
+	if nodePath == "" || !userpath.Within(root, nodePath) {
+		return nil, nil
+	}
+	dir := filepath.Dir(nodePath)
+	if s.Ctx.GOOS != "windows" {
+		s.Ctx.Sayf("便携版 Node.js 位于 %s；自动修改用户 PATH 仅支持 Windows，请自行将该目录加入 PATH", dir)
+		return nil, nil
+	}
+	if s.Ctx.UserPath == nil {
+		return nil, nil
+	}
+	val, err := s.Ctx.UserPath.Read()
+	if err != nil {
+		return nil, protocol.Fatal("PATH_UPDATE_FAILED", "无法读取用户级 PATH: "+err.Error()).WithCause(err)
+	}
+	res := userpath.Ensure(val.Raw, root, dir)
+	if !res.Changed {
+		s.Ctx.Sayf("用户级 PATH 已包含 %s", dir)
+		return nil, nil
+	}
+	if err := s.Ctx.UserPath.Write(userpath.Value{Raw: res.After, Expand: val.Expand}); err != nil {
+		return nil, protocol.Fatal("PATH_UPDATE_FAILED", "无法写入用户级 PATH: "+err.Error()).WithCause(err)
+	}
+	s.Ctx.Sayf("已将 %s 加入用户级 PATH（新开终端生效）", dir)
+	var warnings []string
+	if err := workspace.RecordChange(s.Ctx, func(c *state.Changes) {
+		c.UserPath = append(c.UserPath, state.PathChange{
+			Scope:   "user",
+			Key:     `HKCU\Environment\Path`,
+			Before:  res.Before,
+			After:   res.After,
+			Added:   res.Added,
+			Removed: res.Removed,
+		})
+	}); err != nil {
+		warnings = append(warnings, "无法写入 changes.json 回滚记录: "+err.Error())
+	}
+	return warnings, nil
 }
 
 // EnsureRuntime installs or selects a runtime matching want. Used by later

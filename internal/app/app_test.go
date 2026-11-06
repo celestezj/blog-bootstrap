@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -285,5 +286,89 @@ func TestNextPrefersFailedRequiredStep(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.Status, "REPO_CONFLICT") {
 		t.Fatalf("status = %q", env.Data.Status)
+	}
+}
+
+type fakeFinalizerStep struct {
+	fakeStep
+	calls int
+	warns []string
+	err   error
+}
+
+func (f *fakeFinalizerStep) Finalize(context.Context) ([]string, error) {
+	f.calls++
+	return f.warns, f.err
+}
+
+func planConsent(t *testing.T, a *App, cfgPath string) string {
+	t.Helper()
+	if exit := a.Run([]string{"plan", "--config", cfgPath, "--json"}); exit != protocol.ExitOK {
+		t.Fatalf("plan exit = %d; output:\n%s", exit, a.Stdout.(*bytes.Buffer).String())
+	}
+	out := a.Stdout.(*bytes.Buffer).String()
+	a.Stdout.(*bytes.Buffer).Reset()
+	a.Stderr.(*bytes.Buffer).Reset()
+	var env struct {
+		Data struct {
+			Hash string `json:"hash"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("plan JSON: %v\n%s", err, out)
+	}
+	if env.Data.Hash == "" {
+		t.Fatalf("plan hash empty: %s", out)
+	}
+	return env.Data.Hash
+}
+
+func TestRunCallsFinalizerAfterSuccess(t *testing.T) {
+	step := &fakeFinalizerStep{
+		fakeStep: fakeStep{id: "fake", required: true, verify: map[string]string{"probe": "ok"}},
+		warns:    []string{"finalize warning"},
+	}
+	a, cfgPath := newTestAppWithSteps(t, step)
+	hash := planConsent(t, a, cfgPath)
+	exit := a.Run([]string{"run", "--consent", hash, "--config", cfgPath, "--json"})
+	if exit != protocol.ExitOK {
+		t.Fatalf("exit = %d; output:\n%s", exit, a.Stdout.(*bytes.Buffer).String())
+	}
+	if step.calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", step.calls)
+	}
+	if out := a.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "finalize warning") {
+		t.Fatalf("warning missing from report: %s", out)
+	}
+}
+
+func TestRunFinalizerErrorBecomesWarning(t *testing.T) {
+	step := &fakeFinalizerStep{
+		fakeStep: fakeStep{id: "fake", required: true, verify: map[string]string{"probe": "ok"}},
+		err:      errors.New("registry exploded"),
+	}
+	a, cfgPath := newTestAppWithSteps(t, step)
+	hash := planConsent(t, a, cfgPath)
+	exit := a.Run([]string{"run", "--consent", hash, "--config", cfgPath, "--json"})
+	if exit != protocol.ExitOK {
+		t.Fatalf("exit = %d, want OK (finalize failure must not fail run); output:\n%s", exit, a.Stdout.(*bytes.Buffer).String())
+	}
+	out := a.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(out, "更新用户级 PATH 失败（不影响安装结果）") {
+		t.Fatalf("finalize error missing from warnings: %s", out)
+	}
+}
+
+func TestVerifyDoesNotCallFinalizer(t *testing.T) {
+	step := &fakeFinalizerStep{
+		fakeStep: fakeStep{id: "fake", required: true, verify: map[string]string{"probe": "ok"}},
+	}
+	a, cfgPath := newTestAppWithSteps(t, step)
+	exit := a.Run([]string{"verify", "--strict", "--config", cfgPath, "--json"})
+	if exit != protocol.ExitOK {
+		t.Fatalf("exit = %d; output:\n%s", exit, a.Stdout.(*bytes.Buffer).String())
+	}
+	if step.calls != 0 {
+		t.Fatalf("verify called finalizer %d times; verify must never modify the system", step.calls)
 	}
 }

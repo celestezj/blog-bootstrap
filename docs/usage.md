@@ -163,6 +163,8 @@ JSON 模式下的实时进度（步骤、动作、下载、构建）写到 **std
 
 该哈希覆盖：配置身份与解析后的路径、配置内容摘要、探测到的环境事实，以及每一步的 Inspect 结果（是否已满足、actions、evidence、warning）。
 
+`node` 步骤在需要持久化便携版 Node 时，会给出 `kind: "update_user_path"` 的动作（`target: "HKCU\\Environment\\Path"`）。它同样进入 hash，因此“把便携 Node 写进用户级 PATH”也必须先由 `plan` 展示、再经 `--consent` 授权。
+
 `run` 会重新 Inspect、重建 plan、重算 hash，再与传入值比较：
 
 - 一致：执行；
@@ -338,15 +340,17 @@ blog-bootstrap verify --strict --json
 不会。安装流程不包含发布；写权限只用 `git push --dry-run` 探测。
 
 **Q：安装成功后，新窗口里 `node` / `npm` 找不到怎么办？**
-安装器有意不修改系统 PATH。如果使用的是便携版 Node，它位于 `<配置目录>/.bootstrap/tools/node/`（`<配置目录>` 是 `blog-setup.yml` 所在目录，也就是 `.bootstrap` 的父目录，不是 `workspace.dir`），只通过状态文件里的绝对路径调用。
+Windows 上不用手动处理。当最终使用的是便携版 Node（位于 `<配置目录>/.bootstrap/tools/node/`）时，`run` 在全部步骤验证通过、写入收据后会自动把该目录**前置**到 HKCU 用户级 PATH，并清理 `.bootstrap/tools/node` 下的旧版本条目；终端会提示“已将 … 加入用户级 PATH（新开终端生效）”。新开一个终端即可直接使用 `node` / `npm` / `npm run preview`。
 
-不要照抄其他机器上的路径，从状态文件读取：
+- 该动作在 `plan` 中显示为 `update_user_path`，包含在 consent hash 内，未经同意不会执行。
+- 如果最终使用的是系统 Node.js（不在 `.bootstrap/tools/node` 下），安装器不会修改 PATH。
+- 只修改用户级 PATH（`HKCU\Environment\Path`），不碰系统级 PATH，也不改动其他 PATH 条目。
+- `verify` / `verify --strict` 永不修改 PATH。
+- macOS / Linux 不会自动改 shell 配置，终端会打印需要手动 `export PATH=...` 的提示。
 
-```powershell
-(Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json).paths
-```
+已打开的终端不会自动刷新，请新开窗口。若要回滚，`<配置目录>/.bootstrap/changes.json` 的 `user_path` 记录包含修改前后的完整值（`before` / `after` / `added` / `removed`）。
 
-在博客仓库目录（`workspace.dir`，npm 需要读到 `package.json`）下，用 PowerShell 临时把便携 Node 加进 PATH：
+如果自动更新失败（例如注册表权限受限），`run` 仍会成功，失败信息进入 `report.warnings`。此时可以手动临时加入 PATH，路径一律从状态文件读取，不要照抄其他机器：
 
 ```powershell
 $state = Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json
@@ -355,17 +359,16 @@ where.exe node
 npm run preview
 ```
 
-cmd 下先查出目录，再设置（同样不要写死机器相关的路径）：
+cmd 下：
 
 ```bat
-powershell -NoProfile -Command "(Get-Content <配置目录>\.bootstrap\state.json -Raw | ConvertFrom-Json).paths.node"
-set "NODE_DIR=<上一条命令输出的目录，去掉末尾的 \node.exe>"
+set "NODE_DIR=<由 state.json 的 paths.node 去掉末尾 \node.exe 得到>"
 set "PATH=%NODE_DIR%;%PATH%"
 where node
 npm run preview
 ```
 
-这些改动只作用于当前终端窗口。`preview` 等脚本内部会调用裸命令 `node`，所以只用绝对路径执行 `node.exe` 不够，必须让 Node 目录进入 PATH。要让 `npm` 全局可用，需另外安装系统版 Node.js，与安装器无关。
+这些手动改动只作用于当前终端窗口。`preview` 等脚本内部会调用裸命令 `node`，所以只用绝对路径执行 `node.exe` 不够，必须让 Node 目录进入 PATH。
 
 ## 11. 安全边界
 

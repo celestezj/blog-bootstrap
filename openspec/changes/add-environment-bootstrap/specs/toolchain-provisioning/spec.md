@@ -79,6 +79,25 @@
 - **WHEN** 工具刚刚安装但当前进程 PATH 尚未更新
 - **THEN** 安装器仍能通过绝对路径成功调用工具
 
+### Requirement: 便携 Node 必须可持久使用
+当最终使用的是 `.bootstrap/tools/node/` 下的便携版 Node.js 时，安装器 SHALL 在 `run` 成功写入收据后，把该目录前置写入 Windows 用户级 PATH（`HKCU\Environment\Path`），并清理受管目录下的旧版本条目；MUST NOT 修改系统级 PATH，MUST NOT 删除与该目录无关的条目。该动作 MUST 出现在 plan 中并纳入同意哈希，`verify` MUST NOT 修改 PATH。
+
+#### Scenario: Windows 便携版 Node
+- **WHEN** `run` 验证通过且最终 Node 位于 `.bootstrap/tools/node/` 下
+- **THEN** 安装器更新 HKCU 用户级 PATH、广播环境变更、提示新开终端生效，并把前后值写入 `changes.json`
+
+#### Scenario: 使用系统 Node
+- **WHEN** 最终使用的是 `.bootstrap/tools/node/` 之外的系统 Node.js
+- **THEN** 安装器不修改任何 PATH
+
+#### Scenario: 非 Windows
+- **WHEN** 在 macOS 或 Linux 上使用便携版 Node
+- **THEN** 安装器只打印手动加入 PATH 的指引，MUST NOT 编辑 shell rc 文件
+
+#### Scenario: 验证路径只读
+- **WHEN** 执行 `verify` 或 `verify --strict`
+- **THEN** 不调用任何 PATH 写入逻辑
+
 ### Requirement: 权限与非交互场景必须显式处理
 安装器 SHALL 在需要提权或交互、但当前为非交互环境时返回 `human_required`，MUST NOT 挂起等待输入。
 

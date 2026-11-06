@@ -121,6 +121,26 @@ type Step interface {
 
 关键约束：**Apply 永远不能把步骤标记为成功**。它只负责产生副作用，成功与否只由 Verify 决定。
 
+### Finalize
+
+收据写入后，`run` 还会对实现了 `run.Finalizer` 的步骤调用一次 `Finalize`：
+
+```go
+type Finalizer interface {
+    Finalize(ctx context.Context) (warnings []string, err error)
+}
+```
+
+当前只有 `node` 步骤实现它：当最终使用的 Node.js 位于 `<配置目录>/.bootstrap/tools/node/` 下（便携版）时，把其目录前置写入 HKCU 用户级 PATH，并清理该受管目录下的旧版本条目。`plan` 中的 `update_user_path` 动作会提前展示这一改动并进入 consent hash。
+
+约束：
+
+- 只在 `run` 成功（收据已写入）后执行，`verify` / `--strict` 永不调用，保证验证路径只读；
+- Finalize 失败只追加 warning，不把已通过验证的 run 判为失败；
+- 仅 Windows 自动写入注册表；macOS/Linux 只打印手动指引，不编辑 shell rc；
+- 只增删 `<ToolsDir>/node` 下的条目，其他 PATH 条目原样保留；
+- 修改前后值写入 `changes.json` 的 `user_path`，供人工回滚。
+
 ### 运行时可观测性
 
 `core.Context.Progress` 是唯一的进度输出通道，`Sayf` 写入一行人类可读信息：
@@ -135,7 +155,7 @@ Engine 输出步骤序号、动作列表、执行/验证状态；步骤实现输
 
 ### VerifyStrict
 
-不执行任何 Apply，对每一步重新运行 Verify：
+不执行任何 Apply，也不执行 Finalize，对每一步重新运行 Verify：
 
 - 必需步骤失败 → 返回验证失败（退出码 5）；
 - 可选步骤失败 → 标记 `skipped`，记录 warning，不阻断；

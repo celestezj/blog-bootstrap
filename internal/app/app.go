@@ -28,6 +28,7 @@ import (
 	"github.com/celestezj/blog-bootstrap/internal/run"
 	"github.com/celestezj/blog-bootstrap/internal/state"
 	"github.com/celestezj/blog-bootstrap/internal/steps"
+	"github.com/celestezj/blog-bootstrap/internal/userpath"
 )
 
 const defaultConfig = "blog-setup.yml"
@@ -45,9 +46,10 @@ type App struct {
 	Home   string
 	IsTTY  bool
 
-	Runner  execx.Runner
-	HTTP    *http.Client
-	Browser core.Browser
+	Runner   execx.Runner
+	HTTP     *http.Client
+	Browser  core.Browser
+	UserPath userpath.Store
 
 	Now   func() time.Time
 	Sleep func(time.Duration)
@@ -70,6 +72,7 @@ func New(version string) *App {
 		Runner:       execx.Exec{},
 		HTTP:         httpClient,
 		Browser:      core.BrowserFunc(browser.Open),
+		UserPath:     userpath.NewStore(),
 		Now:          time.Now,
 		Sleep:        time.Sleep,
 		StepsFactory: steps.NewAll,
@@ -250,6 +253,19 @@ func (a *App) cmdRun(args []string) int {
 	rep, err := engine.Run(context.Background())
 	if err != nil {
 		return a.failWithData("run", err, rep, c.json)
+	}
+	for _, step := range steps {
+		finalizer, ok := step.(run.Finalizer)
+		if !ok {
+			continue
+		}
+		warns, ferr := finalizer.Finalize(context.Background())
+		rep.Warnings = append(rep.Warnings, warns...)
+		if ferr != nil {
+			msg := "更新用户级 PATH 失败（不影响安装结果）: " + ferr.Error()
+			rep.Warnings = append(rep.Warnings, msg)
+			ctx.Sayf("  警告: %s", msg)
+		}
 	}
 	if c.json {
 		return a.success("run", rep)
@@ -562,6 +578,7 @@ func (a *App) prepare(configPath string) (*core.Context, []run.Step, error) {
 		Runner:       a.Runner,
 		HTTP:         a.HTTP,
 		Browser:      a.Browser,
+		UserPath:     a.UserPath,
 		Logger:       core.NewLogger(filepath.Join(resolved.BaseDir, ".bootstrap", "logs")),
 		GOOS:         a.GOOS,
 		GOARCH:       a.GOARCH,

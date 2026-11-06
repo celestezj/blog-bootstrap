@@ -88,6 +88,7 @@ type Changes struct {
 	PortableTools  []ToolChange    `json:"portable_tools,omitempty"`
 	SSHBlocks      []SSHChange     `json:"ssh_blocks,omitempty"`
 	Backups        []string        `json:"backups,omitempty"`
+	UserPath       []PathChange    `json:"user_path,omitempty"`
 }
 type PackageChange struct {
 	Manager string `json:"manager"`
@@ -103,6 +104,14 @@ type SSHChange struct {
 	File  string `json:"file"`
 	Alias string `json:"alias"`
 	Block string `json:"block"`
+}
+type PathChange struct {
+	Scope   string   `json:"scope"`
+	Key     string   `json:"key"`
+	Before  string   `json:"before"`
+	After   string   `json:"after"`
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
 }
 
 // Store serializes access to the state file and writes it atomically.
