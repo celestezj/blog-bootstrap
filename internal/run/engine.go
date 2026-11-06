@@ -5,6 +5,7 @@ package run
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/celestezj/blog-bootstrap/internal/core"
@@ -84,8 +85,11 @@ func (e *Engine) order() []string {
 // Run inspects, applies when needed, then verifies every step.
 func (e *Engine) Run(ctx context.Context) (*Report, error) {
 	rep := &Report{Applied: true, PlanHash: e.Ctx.PlanHash}
-	for _, step := range e.Steps {
+	total := len(e.Steps)
+	e.Ctx.Sayf("开始执行安装计划：共 %d 步", total)
+	for i, step := range e.Steps {
 		sr := StepReport{ID: step.ID(), Required: step.Required()}
+		e.Ctx.Sayf("\n[%d/%d] %s", i+1, total, step.ID())
 
 		insp, err := step.Inspect(ctx)
 		if err != nil {
@@ -95,23 +99,31 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s 可选步骤检查失败，已跳过: %v", step.ID(), err))
 				_ = e.markSkipped(step.ID(), err)
 				rep.Steps = append(rep.Steps, sr)
+				e.Ctx.Sayf("  已跳过（可选步骤）: %s", errorSummary(err))
 				continue
 			}
 			sr.Status = "failed"
 			sr.Message = err.Error()
 			rep.Steps = append(rep.Steps, sr)
+			e.Ctx.Sayf("  失败: %s", errorSummary(err))
 			return e.fail(rep, step.ID(), err)
 		}
 		sr.Evidence = insp.Evidence
 		if insp.Warning != "" {
 			rep.Warnings = append(rep.Warnings, insp.Warning)
+			e.Ctx.Sayf("  警告: %s", insp.Warning)
 		}
 
 		switch {
 		case insp.Satisfied:
 			sr.Status = "satisfied"
+			e.Ctx.Sayf("  已满足，正在验证...")
 		default:
 			sr.Actions = insp.Actions
+			for _, act := range insp.Actions {
+				e.Ctx.Sayf("  - %s", describeAction(act))
+			}
+			e.Ctx.Sayf("  执行中...")
 			if err := e.retry(ctx, func() error { return step.Apply(ctx) }); err != nil {
 				if !step.Required() {
 					sr.Status = "skipped"
@@ -119,14 +131,17 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 					rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s 可选步骤失败，已跳过: %v", step.ID(), err))
 					_ = e.markSkipped(step.ID(), err)
 					rep.Steps = append(rep.Steps, sr)
+					e.Ctx.Sayf("  已跳过（可选步骤）: %s", errorSummary(err))
 					continue
 				}
 				sr.Status = "failed"
 				sr.Message = err.Error()
 				rep.Steps = append(rep.Steps, sr)
+				e.Ctx.Sayf("  失败: %s", errorSummary(err))
 				return e.fail(rep, step.ID(), err)
 			}
 			sr.Status = "applied"
+			e.Ctx.Sayf("  执行完成，正在验证...")
 		}
 
 		evidence, err := e.verifyWithRetry(ctx, step)
@@ -137,13 +152,16 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s 可选步骤验证失败，已跳过: %v", step.ID(), err))
 				_ = e.markSkipped(step.ID(), err)
 				rep.Steps = append(rep.Steps, sr)
+				e.Ctx.Sayf("  已跳过（可选步骤）: %s", errorSummary(err))
 				continue
 			}
 			sr.Status = "failed"
 			sr.Message = err.Error()
 			rep.Steps = append(rep.Steps, sr)
+			e.Ctx.Sayf("  验证失败: %s", errorSummary(err))
 			return e.fail(rep, step.ID(), err)
 		}
+		e.Ctx.Sayf("  验证通过")
 		for k, v := range evidence {
 			if sr.Evidence == nil {
 				sr.Evidence = map[string]string{}
@@ -160,6 +178,7 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 			return rep, protocol.Fatal("STATE_WRITE_FAILED", "无法写入状态文件: "+err.Error()).WithCause(err)
 		}
 	}
+	e.Ctx.Sayf("\n全部必需步骤验证通过，正在写入收据...")
 	if err := e.writeReceipt(rep); err != nil {
 		return rep, err
 	}
@@ -170,8 +189,11 @@ func (e *Engine) Run(ctx context.Context) (*Report, error) {
 // only success signal in the protocol.
 func (e *Engine) VerifyStrict(ctx context.Context) (*Report, error) {
 	rep := &Report{Applied: false, PlanHash: e.Ctx.PlanHash}
-	for _, step := range e.Steps {
+	total := len(e.Steps)
+	e.Ctx.Sayf("验证 %d 个步骤（只探测，不修改系统）", total)
+	for i, step := range e.Steps {
 		sr := StepReport{ID: step.ID(), Required: step.Required()}
+		e.Ctx.Sayf("\n[%d/%d] %s", i+1, total, step.ID())
 		evidence, err := e.verifyWithRetry(ctx, step)
 		if err != nil {
 			if !step.Required() {
@@ -180,14 +202,17 @@ func (e *Engine) VerifyStrict(ctx context.Context) (*Report, error) {
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s 可选步骤未通过: %v", step.ID(), err))
 				_ = e.markSkipped(step.ID(), err)
 				rep.Steps = append(rep.Steps, sr)
+				e.Ctx.Sayf("  已跳过（可选步骤）: %s", errorSummary(err))
 				continue
 			}
 			sr.Status = "failed"
 			sr.Message = err.Error()
 			rep.Steps = append(rep.Steps, sr)
+			e.Ctx.Sayf("  验证失败: %s", errorSummary(err))
 			return e.fail(rep, step.ID(), err)
 		}
 		sr.Status = "verified"
+		e.Ctx.Sayf("  验证通过")
 		sr.Evidence = evidence
 		rep.Steps = append(rep.Steps, sr)
 		if err := e.Ctx.State.SetStep(step.ID(), state.StepState{
@@ -198,10 +223,30 @@ func (e *Engine) VerifyStrict(ctx context.Context) (*Report, error) {
 			return rep, protocol.Fatal("STATE_WRITE_FAILED", "无法写入状态文件: "+err.Error()).WithCause(err)
 		}
 	}
+	e.Ctx.Sayf("\n全部必需步骤验证通过，正在写入收据...")
 	if err := e.writeReceipt(rep); err != nil {
 		return rep, err
 	}
 	return rep, nil
+}
+
+func describeAction(act plan.Action) string {
+	detail := strings.TrimSpace(act.Detail)
+	if detail != "" {
+		return detail
+	}
+	target := strings.TrimSpace(act.Target)
+	if target != "" {
+		return act.Kind + " " + target
+	}
+	return act.Kind
+}
+
+func errorSummary(err error) string {
+	if pe := protocol.As(err); pe != nil {
+		return pe.Code + ": " + pe.Message
+	}
+	return err.Error()
 }
 
 func (e *Engine) verifyWithRetry(ctx context.Context, step Step) (map[string]string, error) {

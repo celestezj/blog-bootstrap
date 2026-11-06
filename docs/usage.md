@@ -128,6 +128,8 @@ go build -o blog-bootstrap.exe ./cmd/blog-bootstrap
 
 同一个命令要同时服务人和 AI，所以默认给人看，机器模式显式开启。位置是 `blog-bootstrap <command> --json`；写成 `blog-bootstrap --json plan` 会被当成未知命令。
 
+JSON 模式下的实时进度（步骤、动作、下载、构建）写到 **stderr**，stdout 仍只输出一个可解析的 JSON 信封；文本模式的进度直接写到 stdout。
+
 ### 4.3 `--strict` 是什么意思
 
 **strict = 不依据缓存里的步骤状态下结论，现在现场重新探测。** `verify --strict` 对每一步重新执行 Verify 探针；它可能用状态文件里记录的工具绝对路径或 SSH endpoint 作为起点，但成功与否只由本次探测决定。
@@ -219,6 +221,28 @@ blog-bootstrap verify --strict --json
 4. 最终仍以 `verify --strict --json` 为准。
 
 安装后可选执行 `blog-bootstrap doctor --json` 做健康检查；它只给警告，不声称已验证。
+
+### 5.1 运行时输出与 SSH 公钥登记
+
+`plan`、`run`、`verify` 都会实时打印进度，不用盯着静止的终端猜它在做什么：
+
+- 当前步骤和序号，例如 `[1/5] auth.ssh`；
+- 即将执行的具体动作；
+- 下载便携工具时，每 2 秒报告已下载字节和百分比；
+- `npm ci`、`hexo generate`、临时 server 等耗时阶段开始/结束提示。
+
+`auth.ssh` 需要登记公钥时，终端会依次打印：
+
+1. 当前要登录的 GitHub 账号；
+2. 打开页面后要点击 “Add SSH key”；
+3. 完整公钥（页面没自动填时可手动粘贴）；
+4. 公钥 SHA256 指纹，便于和页面核对；
+5. 登记页面 URL（浏览器自动打开失败时手动访问）。
+
+随后分两种模式：
+
+- **交互式终端**：持续轮询，显示第几次检查、已等待多少秒，最多 180 秒；检测到 `Hi <owner>!` 后自动继续。
+- **非交互式（AI 调用、重定向、无 TTY）**：立即返回 `AUTH_KEY_NOT_ADDED`（退出码 2），不阻塞等待。用户完成登记后，按第 6 节重新 `plan` → `run`；已完成的步骤会自动跳过。
 
 ## 6. 中断后如何续跑
 

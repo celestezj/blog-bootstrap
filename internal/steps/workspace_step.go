@@ -139,18 +139,29 @@ func (s *WorkspaceStep) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if g.IsGitRepo(ctx, s.Ctx.Config.Dir) {
+		s.Ctx.Sayf("博客仓库已存在，正在校验分支 %s 与 origin...", s.Ctx.Config.Branch)
+	} else {
+		s.Ctx.Sayf("正在克隆博客仓库 %s（分支 %s）到 %s...", s.sourceURL(), s.Ctx.Config.Branch, s.Ctx.Config.Dir)
+	}
 	if _, err := g.EnsureCheckout(ctx, s.sourceURL(), s.Ctx.Config.Dir, s.Ctx.Config.Branch); err != nil {
 		return err
 	}
+	s.Ctx.Sayf("博客仓库就绪: %s", s.Ctx.Config.Dir)
 	_, declared, err := g.SubmodulePath(ctx, s.Ctx.Config.Dir, workspace.ThemePath)
 	if err != nil {
 		return err
 	}
 	if declared {
+		s.Ctx.Sayf("正在初始化主题子模块 %s...", workspace.ThemePath)
 		if err := g.ConfigureSubmoduleURL(ctx, s.Ctx.Config.Dir, workspace.ThemePath, s.themeURL()); err != nil {
 			return err
 		}
-		return g.InitSubmodules(ctx, s.Ctx.Config.Dir)
+		if err := g.InitSubmodules(ctx, s.Ctx.Config.Dir); err != nil {
+			return err
+		}
+		s.Ctx.Sayf("主题子模块就绪")
+		return nil
 	}
 	gitlink, err := g.ThemeGitlink(ctx, s.Ctx.Config.Dir, workspace.ThemePath)
 	if err != nil {
@@ -158,12 +169,18 @@ func (s *WorkspaceStep) Apply(ctx context.Context) error {
 	}
 	themeDir := filepath.Join(s.Ctx.Config.Dir, filepath.FromSlash(workspace.ThemePath))
 	if head, ok := g.HeadCommit(ctx, themeDir); ok && head != gitlink {
+		s.Ctx.Sayf("正在把主题切换到父仓库记录的提交 %s...", gitlink)
 		if err := g.CheckoutCommit(ctx, themeDir, gitlink); err != nil {
 			return err
 		}
 		return g.VerifyTheme(ctx, themeDir, gitlink)
 	}
-	return g.CloneTheme(ctx, s.themeURL(), themeDir, gitlink)
+	s.Ctx.Sayf("正在克隆主题 %s 并检出提交 %s...", s.themeURL(), gitlink)
+	if err := g.CloneTheme(ctx, s.themeURL(), themeDir, gitlink); err != nil {
+		return err
+	}
+	s.Ctx.Sayf("主题就绪: %s", themeDir)
+	return nil
 }
 
 func (s *WorkspaceStep) Verify(ctx context.Context) (map[string]string, error) {

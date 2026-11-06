@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,45 @@ func newCtx(t *testing.T) (*core.Context, *[]time.Duration) {
 		PlanHash: "hash",
 	}
 	return ctx, &waits
+}
+
+func TestRunPrintsProgressLines(t *testing.T) {
+	ctx, _ := newCtx(t)
+	var lines []string
+	ctx.Progress = func(line string) { lines = append(lines, line) }
+	c := &counters{}
+	step := &fakeStep{id: "node", required: true, c: c}
+	if _, err := run.NewEngine(ctx, step).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"开始执行安装计划：共 1 步",
+		"[1/1] node",
+		"执行中...",
+		"验证通过",
+		"正在写入收据",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("progress missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestVerifyStrictPrintsProgressLines(t *testing.T) {
+	ctx, _ := newCtx(t)
+	var lines []string
+	ctx.Progress = func(line string) { lines = append(lines, line) }
+	c := &counters{}
+	if _, err := run.NewEngine(ctx, &fakeStep{id: "preview", required: true, c: c}).VerifyStrict(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"验证 1 个步骤", "[1/1] preview", "验证通过"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("progress missing %q:\n%s", want, joined)
+		}
+	}
 }
 
 func TestRunHappyPathWritesReceipt(t *testing.T) {

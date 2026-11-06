@@ -177,6 +177,8 @@ func (a *App) cmdPlan(args []string) int {
 	if err != nil {
 		return a.fail("plan", err, c.json)
 	}
+	a.enableProgress(ctx, c.json)
+	ctx.Sayf("正在检查当前环境...")
 	p, err := a.buildPlan(ctx, steps)
 	if err != nil {
 		return a.fail("plan", err, c.json)
@@ -206,6 +208,8 @@ func (a *App) cmdRun(args []string) int {
 	if err != nil {
 		return a.fail("run", err, c.json)
 	}
+	a.enableProgress(ctx, c.json)
+	ctx.Sayf("正在检查当前环境并生成计划...")
 
 	fl, err := lock.Acquire(filepath.Join(ctx.BootstrapDir(), "run.lock"), ctx.State.Snapshot().RunID, a.now)
 	if err != nil {
@@ -235,6 +239,7 @@ func (a *App) cmdRun(args []string) int {
 		return a.fail("run", protocol.Fatal("STATE_WRITE_FAILED", "无法写入状态文件: "+err.Error()).WithCause(err), c.json)
 	}
 	ctx.PlanHash = fresh.Hash
+	ctx.Sayf("计划已确认，开始执行。")
 	for _, step := range steps {
 		if ctx.Logger != nil {
 			_ = ctx.Logger.Begin(step.ID())
@@ -380,6 +385,8 @@ func (a *App) cmdVerify(args []string) int {
 	if err != nil {
 		return a.fail("verify", err, c.json)
 	}
+	a.enableProgress(ctx, c.json)
+	ctx.Sayf("开始现场验证...")
 	fl, err := lock.Acquire(filepath.Join(ctx.BootstrapDir(), "run.lock"), ctx.State.Snapshot().RunID, a.now)
 	if err != nil {
 		return a.fail("verify", err, c.json)
@@ -569,6 +576,21 @@ func (a *App) prepare(configPath string) (*core.Context, []run.Step, error) {
 		factory = steps.NewAll
 	}
 	return ctx, factory(ctx), nil
+}
+
+// enableProgress sends human-facing progress to stdout in text mode and to
+// stderr in JSON mode so stdout stays a single parseable document.
+func (a *App) enableProgress(ctx *core.Context, json bool) {
+	w := a.Stdout
+	if json {
+		w = a.Stderr
+	}
+	if w == nil {
+		return
+	}
+	ctx.Progress = func(line string) {
+		fmt.Fprintln(w, line)
+	}
 }
 
 // reloadState re-reads the state file after the run lock is acquired so a

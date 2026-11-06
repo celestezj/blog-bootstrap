@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/celestezj/blog-bootstrap/internal/protocol"
 )
@@ -39,6 +40,9 @@ type Portable struct {
 	GOOS     string
 	GOARCH   string
 	Logf     func(format string, args ...interface{})
+	// Progress receives cumulative download bytes and the expected total
+	// (negative when the server does not send Content-Length).
+	Progress func(downloaded, total int64)
 }
 
 const maxDownload = 512 << 20
@@ -152,7 +156,11 @@ func (p *Portable) download(ctx context.Context, url, dest string) error {
 		return protocol.Fatal("DOWNLOAD_FAILED", err.Error()).WithCause(err)
 	}
 	defer f.Close()
-	n, err := io.Copy(f, io.LimitReader(resp.Body, maxDownload+1))
+	body := io.LimitReader(resp.Body, maxDownload+1)
+	if p.Progress != nil {
+		body = &progressReader{reader: body, total: resp.ContentLength, progress: p.Progress}
+	}
+	n, err := io.Copy(f, body)
 	if err != nil {
 		return protocol.Retry("NETWORK_UNREACHABLE", "下载中断: "+err.Error()).WithCause(err)
 	}
@@ -160,6 +168,25 @@ func (p *Portable) download(ctx context.Context, url, dest string) error {
 		return protocol.Fatal("DOWNLOAD_TOO_LARGE", "下载文件超过上限")
 	}
 	return nil
+}
+
+// progressReader reports cumulative bytes at most every two seconds.
+type progressReader struct {
+	reader   io.Reader
+	total    int64
+	done     int64
+	progress func(downloaded, total int64)
+	last     time.Time
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.done += int64(n)
+	if now := time.Now(); now.Sub(r.last) >= 2*time.Second || err == io.EOF {
+		r.last = now
+		r.progress(r.done, r.total)
+	}
+	return n, err
 }
 
 func (p *Portable) fetchChecksum(ctx context.Context, spec PortableSpec) (string, error) {

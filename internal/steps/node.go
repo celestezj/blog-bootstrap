@@ -201,6 +201,7 @@ func (s *NodeStep) Apply(ctx context.Context) error {
 	if rt, ok, err := s.current(ctx); err != nil {
 		return err
 	} else if ok {
+		s.Ctx.Sayf("Node.js 已就绪: %s (%s)", rt.Node.Version.String(), rt.Node.Path)
 		return s.storePaths(rt)
 	}
 	want := s.DesiredVersion()
@@ -215,7 +216,9 @@ func (s *NodeStep) Apply(ctx context.Context) error {
 		if node == nil || systemMismatch || npm == nil {
 			if node == nil {
 				if manager, ok := s.Installer.Manager(ctx); ok {
+					s.Ctx.Sayf("未找到可用的 Node.js，正在通过 %s 安装（可能需要管理员权限，耗时几分钟，请勿关闭窗口）...", manager)
 					if err := s.Installer.Install(ctx, manager, toolchain.Node); err == nil {
+						s.Ctx.Sayf("系统 Node.js 安装完成")
 						_ = workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 							c.SystemPackages = append(c.SystemPackages, state.PackageChange{Manager: manager, Package: "nodejs", Action: "install"})
 						})
@@ -229,9 +232,11 @@ func (s *NodeStep) Apply(ctx context.Context) error {
 				return err
 			}
 			if node != nil && npm != nil && toolchain.NodeSupported(node.Version) && toolchain.MatchWant(want, node.Version) {
+				s.Ctx.Sayf("Node.js 就绪: %s (%s)", node.Version.String(), node.Path)
 				return s.storePaths(s.runtimeFor(node, npm))
 			}
 		} else {
+			s.Ctx.Sayf("Node.js 就绪: %s (%s)", node.Version.String(), node.Path)
 			return s.storePaths(s.runtimeFor(node, npm))
 		}
 	}
@@ -249,6 +254,7 @@ func (s *NodeStep) installPortable(ctx context.Context) error {
 	if err != nil {
 		return protocol.Fatal("NODE_VERSION_UNSUPPORTED", err.Error()).WithCause(err)
 	}
+	s.Ctx.Sayf("正在下载便携版 Node.js %s...", spec.Version)
 	tool, err := s.Portable.Ensure(ctx, spec)
 	if err != nil {
 		return err
@@ -264,6 +270,7 @@ func (s *NodeStep) installPortable(ctx context.Context) error {
 	if err := s.storePaths(rt); err != nil {
 		return err
 	}
+	s.Ctx.Sayf("便携版 Node.js 就绪: %s (%s)", tool.Version.String(), tool.Path)
 	return workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 		for _, existing := range c.PortableTools {
 			if existing.Name == "node" && existing.Path == tool.Path {
@@ -320,6 +327,7 @@ func (s *NodeStep) installPortableVersion(ctx context.Context, want string) (*no
 	if err != nil {
 		return nil, protocol.Fatal("NODE_VERSION_UNSUPPORTED", err.Error()).WithCause(err)
 	}
+	s.Ctx.Sayf("仓库要求 Node.js %s，正在准备便携版本...", spec.Version)
 	tool, err := s.Portable.Ensure(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -335,6 +343,7 @@ func (s *NodeStep) installPortableVersion(ctx context.Context, want string) (*no
 	if err := s.storePaths(rt); err != nil {
 		return nil, err
 	}
+	s.Ctx.Sayf("便携版 Node.js 就绪: %s (%s)", tool.Version.String(), tool.Path)
 	if err := workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 		for _, existing := range c.PortableTools {
 			if existing.Name == "node" && existing.Path == tool.Path {

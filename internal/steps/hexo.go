@@ -96,6 +96,7 @@ func (s *HexoStep) Apply(ctx context.Context) error {
 	if !ok {
 		return protocol.Fatal("TOOLS_MISSING", "Node.js 未就绪，无法安装 hexo-cli")
 	}
+	s.Ctx.Sayf("正在通过 npm 安装可选工具 hexo-cli（失败不影响后续构建）...")
 	name, args := toolchain.NpmInvocation(rt.Node.Path, rt.Npm.Path, s.Ctx.GOOS, "install", "-g", "hexo-cli@latest")
 	res := s.Ctx.Runner.Run(ctx, "", rt.Env, name, args...)
 	logPath := ""
@@ -106,6 +107,7 @@ func (s *HexoStep) Apply(ctx context.Context) error {
 	if res.Failed() {
 		return protocol.Fatal("NPM_INSTALL_FAILED", "安装全局 hexo-cli 失败: "+strings.TrimSpace(res.Combined())).WithLog(logPath)
 	}
+	s.Ctx.Sayf("hexo-cli 安装完成")
 	return workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 		c.SystemPackages = append(c.SystemPackages, state.PackageChange{Manager: "npm", Package: "hexo-cli", Action: "install"})
 	})

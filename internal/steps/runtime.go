@@ -26,9 +26,19 @@ func NewAll(ctx *core.Context) []run.Step {
 		GOOS:     ctx.GOOS,
 		GOARCH:   ctx.GOARCH,
 		Logf: func(format string, args ...interface{}) {
+			line := strings.TrimSpace(fmt.Sprintf(format, args...))
 			if ctx.Logger != nil {
-				ctx.Logger.Append("node", "portable", strings.TrimSpace(fmt.Sprintf(format, args...)))
+				ctx.Logger.Append("node", "portable", line)
 			}
+			ctx.Sayf("  %s", line)
+		},
+		Progress: func(downloaded, total int64) {
+			if total > 0 {
+				ctx.Sayf("  已下载 %s / %s（%.0f%%）", humanBytes(downloaded), humanBytes(total),
+					float64(downloaded)*100/float64(total))
+				return
+			}
+			ctx.Sayf("  已下载 %s", humanBytes(downloaded))
 		},
 	}
 	nodes := &NodeStep{Ctx: ctx, Installer: installer, Portable: portable}
@@ -81,6 +91,19 @@ func endpointParts(label string) (string, int) {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 // asVerify converts deterministic apply/probe failures into verification

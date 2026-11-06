@@ -2,6 +2,7 @@
 package core
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -48,8 +49,19 @@ type Context struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
+	// Progress receives human-facing progress lines. nil disables output.
+	Progress func(string)
+
 	// PlanHash is set for run and recorded in the receipt.
 	PlanHash string
+}
+
+// Sayf emits one human-facing progress line when progress output is enabled.
+func (c *Context) Sayf(format string, args ...interface{}) {
+	if c.Progress == nil {
+		return
+	}
+	c.Progress(fmt.Sprintf(format, args...))
 }
 
 // BootstrapDir is the installer's private working directory.

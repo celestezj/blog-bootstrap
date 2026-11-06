@@ -121,6 +121,18 @@ type Step interface {
 
 关键约束：**Apply 永远不能把步骤标记为成功**。它只负责产生副作用，成功与否只由 Verify 决定。
 
+### 运行时可观测性
+
+`core.Context.Progress` 是唯一的进度输出通道，`Sayf` 写入一行人类可读信息：
+
+- 文本模式输出到 stdout；
+- JSON 模式输出到 stderr，保证 stdout 只有一个 JSON 信封；
+- `Progress == nil` 时静默，单元测试和库调用不受影响。
+
+Engine 输出步骤序号、动作列表、执行/验证状态；步骤实现输出具体耗时操作（安装、下载、clone、`npm ci`、构建、SSH 轮询）。便携工具下载通过 `Portable.Progress` 每 2 秒报告字节数。
+
+`auth.ssh` 的登记流程也走同一通道：终端打印账号、公钥、指纹和 URL；交互式终端轮询并显示次数与耗时，非交互式立即返回 `human` 错误，避免 AI 调用被阻塞 180 秒。
+
 ### VerifyStrict
 
 不执行任何 Apply，对每一步重新运行 Verify：
@@ -206,7 +218,7 @@ type Step interface {
 - **Windows `.cmd` shim**：不执行 `npm.cmd`/`hexo.cmd`，而是调用 `node.exe` + `npm-cli.js` 或 hexo 的 JS 入口，避免 `CreateProcess` 无法直接执行批处理。
 - **进程树回收**：Windows 使用 Job Object，辅以 `taskkill /T`；POSIX 使用进程组和 `SIGKILL`。
 - **控制台**：启动时设置 UTF-8，避免中文输出乱码。
-- **非 TTY**：需要提权或交互时返回 `human_required`，不挂起等待。
+- **非 TTY**：需要提权或交互时（包括等待 SSH 公钥登记）返回 `human_required`，不挂起等待。
 - **PATH**：子进程使用状态中记录的绝对路径并显式构造 PATH，规避安装后当前终端 PATH 未刷新的问题。
 
 ## 10. 安全模型

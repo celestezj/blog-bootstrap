@@ -2,6 +2,7 @@ package sshauth
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -75,6 +76,15 @@ type Manager struct {
 	// KnownHosts overrides UserKnownHostsFile for read-only probes so that
 	// inspection never mutates the user's real known_hosts before consent.
 	KnownHosts string
+
+	// Notify receives human-facing progress while waiting for enrollment.
+	Notify func(string)
+}
+
+func (m *Manager) notify(format string, args ...interface{}) {
+	if m.Notify != nil {
+		m.Notify(fmt.Sprintf(format, args...))
+	}
 }
 
 func (m *Manager) now() time.Time {
@@ -235,18 +245,28 @@ func (m *Manager) PollEnrollment(ctx context.Context, key Key, ep Endpoint) (Gre
 		timeout = 180 * time.Second
 	}
 	deadline := m.now().Add(timeout)
+	start := m.now()
+	attempt := 0
+	m.notify("等待公钥生效：每 %d 秒检查一次，最多 %d 秒",
+		int(interval.Seconds()), int(timeout.Seconds()))
 	for {
+		attempt++
 		out, err := m.Greeting(ctx, key, ep)
 		if err != nil {
 			return GreetingNone, "", err
 		}
 		state, account := EvaluateGreeting(out, m.Owner)
 		if state != GreetingNone {
+			m.notify("公钥已生效（第 %d 次检查）", attempt)
 			return state, account, nil
 		}
 		if !m.now().Before(deadline) {
+			m.notify("等待超时：%d 秒内未检测到公钥", int(timeout.Seconds()))
 			return GreetingNone, "", nil
 		}
+		elapsed := int(m.now().Sub(start).Seconds())
+		m.notify("第 %d 次检查：尚未生效（已等待 %d/%d 秒）",
+			attempt, elapsed, int(timeout.Seconds()))
 		m.wait(interval)
 	}
 }
@@ -299,6 +319,13 @@ func (m *Manager) ProbeWrite(ctx context.Context, url, branch, name, email strin
 		return protocol.Fatal("AUTH_PROBE_FAILED", "创建探针提交失败: "+strings.TrimSpace(commit.Combined()))
 	}
 	push := m.Runner.Run(ctx, dir, nil, gitPath, "push", "--dry-run", url, "HEAD:refs/heads/"+branch)
+	if push.Failed() && isNonFastForward(push.Combined()) {
+		// The remote branch already has history that the throwaway probe commit
+		// does not descend from. Try a different ref name so the probe does not
+		// depend on the deploy branch's history; --dry-run still sends no
+		// update, so nothing is created or moved.
+		push = m.Runner.Run(ctx, dir, nil, gitPath, "push", "--dry-run", url, "HEAD:refs/heads/blog-bootstrap-write-probe")
+	}
 	if push.Failed() {
 		out := strings.TrimSpace(push.Combined())
 		if netx.IsConnectFailure(out) {
@@ -309,4 +336,13 @@ func (m *Manager) ProbeWrite(ctx context.Context, url, branch, name, email strin
 			WithDetails(map[string]string{"url": url})
 	}
 	return nil
+}
+
+// isNonFastForward reports a rejected push caused by remote history, not by
+// missing permissions.
+func isNonFastForward(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "non-fast-forward") ||
+		strings.Contains(lower, "fetch first") ||
+		strings.Contains(lower, "updates were rejected")
 }

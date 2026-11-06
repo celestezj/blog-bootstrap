@@ -254,6 +254,43 @@ func TestProbeWriteUsesDryRunAndKeepsIdentityLocal(t *testing.T) {
 	}
 }
 
+// An existing remote branch rejects a non-descendant probe commit. The probe
+// must retry with a throwaway ref instead of reporting a permission failure,
+// and must never force-push or otherwise touch remote data.
+func TestProbeWriteFallsBackToThrowawayRefOnNonFastForward(t *testing.T) {
+	fake := execx.NewFake()
+	fake.Handler = func(c execx.Call) execx.Result {
+		joined := strings.Join(c.Args, " ")
+		if !strings.HasPrefix(joined, "push") {
+			return execx.Result{}
+		}
+		if strings.Contains(joined, "HEAD:refs/heads/blog-bootstrap-write-probe") {
+			return execx.Result{}
+		}
+		return execx.Result{ExitCode: 1, Stderr: "! [rejected] HEAD -> master (fetch first)\n" +
+			"error: failed to push some refs\n" +
+			"hint: Updates were rejected because the remote contains work that you do not have locally."}
+	}
+	m := manager(fake)
+	if err := m.ProbeWrite(context.Background(), "git@alias:o/r.git", "master", "N", "e@x.com"); err != nil {
+		t.Fatalf("throwaway-ref fallback should prove write access: %v", err)
+	}
+	var fallback bool
+	for _, c := range fake.Calls {
+		joined := strings.Join(c.Args, " ")
+		if strings.Contains(joined, "--force") {
+			t.Fatalf("probe must never force-push: %s", joined)
+		}
+		if strings.HasPrefix(joined, "push --dry-run") &&
+			strings.Contains(joined, "HEAD:refs/heads/blog-bootstrap-write-probe") {
+			fallback = true
+		}
+	}
+	if !fallback {
+		t.Fatal("expected a dry-run retry to the throwaway probe ref")
+	}
+}
+
 func TestProbeWritePermissionDenied(t *testing.T) {
 	fake := execx.NewFake()
 	fake.Handler = func(c execx.Call) execx.Result {

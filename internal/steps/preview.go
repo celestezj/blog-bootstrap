@@ -143,15 +143,21 @@ func (s *PreviewStep) Apply(ctx context.Context) error {
 
 	builder := s.builder(rt)
 	if s.Ctx.State.Snapshot().NPMCacheKey != key || !s.depsReady() {
+		s.Ctx.Sayf("正在安装项目依赖（npm ci，文件较多时可能需要几分钟）...")
 		if err := builder.InstallDependencies(ctx, s.Ctx.Config.Dir, rt.Node.Path, rt.Npm.Path); err != nil {
 			return err
 		}
+		s.Ctx.Sayf("依赖安装完成")
 		if err := s.Ctx.State.SetNPMCacheKey(key); err != nil {
 			return protocol.Fatal("STATE_WRITE_FAILED", "无法写入状态文件: "+err.Error()).WithCause(err)
 		}
 	}
-	_, err = builder.Build(ctx, s.Ctx.Config.Dir, rt.Node.Path)
-	return err
+	s.Ctx.Sayf("正在构建站点（hexo clean && hexo generate && clean-search）...")
+	if _, err := builder.Build(ctx, s.Ctx.Config.Dir, rt.Node.Path); err != nil {
+		return err
+	}
+	s.Ctx.Sayf("站点构建完成，产物位于 %s", filepath.Join(s.Ctx.Config.Dir, "public"))
+	return nil
 }
 
 func (s *PreviewStep) Verify(ctx context.Context) (map[string]string, error) {
@@ -200,6 +206,7 @@ func (s *PreviewStep) Verify(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, protocol.Verify("NPM_INSTALL_FAILED", "无法读取 lockfile: "+err.Error())
 	}
+	s.Ctx.Sayf("正在启动临时预览服务并确认页面返回 HTTP 200...")
 	smoke, err := s.server(rt).Smoke(ctx, dir, rt.Node.Path, hexo)
 	if err != nil {
 		return nil, asVerify(err)

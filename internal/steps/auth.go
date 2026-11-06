@@ -121,7 +121,9 @@ func (s *AuthStep) ensureGit(ctx context.Context) (*toolchain.Tool, *toolchain.T
 	if git == nil || !toolchain.GitSupported(git.Version) {
 		var installErr error
 		if manager, ok := s.Installer.Manager(ctx); ok {
+			s.Ctx.Sayf("未找到可用的 git，正在通过 %s 安装（可能需要管理员权限，耗时几分钟，请勿关闭窗口）...", manager)
 			if err := s.Installer.Install(ctx, manager, toolchain.Git); err == nil {
+				s.Ctx.Sayf("系统 git 安装完成")
 				_ = workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 					c.SystemPackages = append(c.SystemPackages, state.PackageChange{Manager: manager, Package: "git", Action: "install"})
 				})
@@ -138,10 +140,12 @@ func (s *AuthStep) ensureGit(ctx context.Context) (*toolchain.Tool, *toolchain.T
 			if specErr != nil {
 				return nil, nil, humanToolError("git", installErr)
 			}
+			s.Ctx.Sayf("系统安装不可用，正在下载便携版 git %s...", spec.Version)
 			tool, perr := s.Portable.Ensure(ctx, spec)
 			if perr != nil {
 				return nil, nil, perr
 			}
+			s.Ctx.Sayf("便携版 git 就绪: %s", tool.Path)
 			if recErr := workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 				c.PortableTools = append(c.PortableTools, state.ToolChange{Name: "git", Version: tool.Version.String(), Path: tool.Path})
 			}); recErr != nil {
@@ -149,6 +153,9 @@ func (s *AuthStep) ensureGit(ctx context.Context) (*toolchain.Tool, *toolchain.T
 			}
 			git = tool
 		}
+	}
+	if git != nil {
+		s.Ctx.Sayf("git 就绪: %s (%s)", git.Version.String(), git.Path)
 	}
 
 	ssh, err := toolchain.DetectSSH(ctx, s.Ctx.Runner, s.Ctx.State.Snapshot().Paths.SSH)
@@ -207,6 +214,7 @@ func (s *AuthStep) Inspect(ctx context.Context) (run.Inspection, error) {
 		mgr.KnownHosts = knownHosts
 		defer cleanup()
 	}
+	s.Ctx.Sayf("  正在探测 GitHub SSH 端点...")
 	endpoint, err := mgr.ChooseEndpoint(ctx)
 	if err != nil {
 		return run.Inspection{}, err
@@ -217,6 +225,7 @@ func (s *AuthStep) Inspect(ctx context.Context) (run.Inspection, error) {
 	if err != nil {
 		return run.Inspection{}, protocol.Fatal("AUTH_KEY_READ_FAILED", "无法读取 SSH 密钥目录: "+err.Error()).WithCause(err)
 	}
+	s.Ctx.Sayf("  正在检查可复用的 SSH 密钥...")
 	key, wrong, err := mgr.FindReusableKey(ctx, keys, endpoint)
 	if err != nil {
 		return run.Inspection{}, err
@@ -270,16 +279,19 @@ func (s *AuthStep) Apply(ctx context.Context) error {
 		return err
 	}
 	mgr := s.manager(ctx, git, ssh)
+	s.Ctx.Sayf("正在探测 GitHub SSH 端点（优先 github.com:22，不可达时回退 ssh.github.com:443）...")
 	endpoint, err := mgr.ChooseEndpoint(ctx)
 	if err != nil {
 		return err
 	}
+	s.Ctx.Sayf("SSH 端点可用: %s", endpoint.Label())
 	block, err := sshauth.EnsureHostBlock(configPath(s.Ctx), s.Ctx.Config.Alias, endpoint.Host, endpoint.Port, s.Ctx.Config.KeyPath, s.Ctx.NowTime())
 	if err != nil {
 		return err
 	}
 	mgr.Alias = block.Alias
 	if block.Changed {
+		s.Ctx.Sayf("正在写入 SSH 配置块 %q 到 %s（写入前会备份原文件）...", block.Alias, block.Path)
 		if err := workspace.RecordChange(s.Ctx, func(c *state.Changes) {
 			c.SSHBlocks = append(c.SSHBlocks, state.SSHChange{File: block.Path, Alias: block.Alias, Block: block.Block})
 			if block.Backup != "" {
@@ -295,26 +307,31 @@ func (s *AuthStep) Apply(ctx context.Context) error {
 
 	var key sshauth.Key
 	if fileExists(s.Ctx.Config.KeyPath) {
+		s.Ctx.Sayf("使用已有 SSH 私钥: %s", s.Ctx.Config.KeyPath)
 		key, err = sshauth.ReadKey(s.Ctx.Config.KeyPath)
 		if err != nil {
 			return protocol.Fatal("AUTH_KEY_READ_FAILED", "无法读取已配置的 key: "+err.Error()).WithCause(err)
 		}
 	} else {
+		s.Ctx.Sayf("生成新的 ed25519 SSH 密钥对: %s", s.Ctx.Config.KeyPath)
 		comment := "blog-bootstrap " + s.Ctx.Config.Owner
 		k, genErr := sshauth.GenerateKey(ctx, s.Ctx.Runner, s.sshKeygen(ctx), s.Ctx.Config.KeyPath, comment)
 		if genErr != nil {
 			return genErr
 		}
 		key = *k
+		s.Ctx.Sayf("密钥已生成（私钥权限 0600，无口令）")
 		_ = s.Ctx.State.SetPaths(func(p *state.Paths) { p.Key = key.Path })
 	}
 
+	s.Ctx.Sayf("正在用该密钥连接 GitHub，确认它属于账号 %s...", s.Ctx.Config.Owner)
 	out, err := mgr.Greeting(ctx, key, endpoint)
 	if err != nil {
 		return err
 	}
 	switch state, account := sshauth.EvaluateGreeting(out, s.Ctx.Config.Owner); state {
 	case sshauth.GreetingMatch:
+		s.Ctx.Sayf("SSH 身份验证通过：Hi %s!", s.Ctx.Config.Owner)
 		return nil
 	case sshauth.GreetingWrong:
 		return s.wrongAccount(account)
@@ -324,33 +341,67 @@ func (s *AuthStep) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	fp := s.fingerprint(ctx, key)
 	url, err := sshauth.OpenEnrollment(s.Ctx.Browser, s.Ctx.Config.Owner, publicKey)
 	if err != nil {
 		return err
 	}
-	greeting, account, err := mgr.PollEnrollment(ctx, key, endpoint)
-	if err != nil {
-		return err
+
+	s.Ctx.Sayf("")
+	s.Ctx.Sayf("需要你在浏览器完成一步操作：")
+	s.Ctx.Sayf("  1. 确认浏览器中登录的是 GitHub 账号 %s", s.Ctx.Config.Owner)
+	s.Ctx.Sayf("  2. 在打开的 “Add new SSH key” 页面点击 “Add SSH key”")
+	s.Ctx.Sayf("  3. 若页面没有自动填入公钥，请手动粘贴下面这一整行：")
+	s.Ctx.Sayf("")
+	s.Ctx.Sayf("     %s", publicKey)
+	if fp != "" {
+		s.Ctx.Sayf("")
+		s.Ctx.Sayf("  公钥指纹（可与页面核对）：%s", fp)
 	}
-	switch greeting {
-	case sshauth.GreetingMatch:
-		return nil
-	case sshauth.GreetingWrong:
-		return s.wrongAccount(account)
-	default:
-		msg := "公钥尚未在 GitHub 生效，请在浏览器中确认已登录 " + s.Ctx.Config.Owner + " 并点击 Add SSH key"
-		return protocol.Human("AUTH_KEY_NOT_ADDED", msg, &protocol.NextAction{
+	s.Ctx.Sayf("")
+	s.Ctx.Sayf("已尝试自动打开登记页面；若浏览器没有打开，请手动访问：")
+	s.Ctx.Sayf("  %s", url)
+
+	humanErr := func(message string) error {
+		return protocol.Human("AUTH_KEY_NOT_ADDED", message, &protocol.NextAction{
 			Type:     "human",
 			Code:     "AUTH_KEY_NOT_ADDED",
 			OpenURL:  url,
-			Message:  msg,
+			Message:  message,
 			Expected: "Hi " + s.Ctx.Config.Owner + "!",
 			Poll: &protocol.Poll{
 				Command:         "blog-bootstrap verify --step auth.ssh --json",
 				IntervalSeconds: 5,
 				TimeoutSeconds:  180,
 			},
+		}).WithDetails(map[string]string{
+			"fingerprint": fp,
+			"add_key_url": url,
 		})
+	}
+	if !s.Ctx.IsTTY {
+		msg := "请在浏览器中确认已登录 " + s.Ctx.Config.Owner + " 并点击 Add SSH key，然后重新生成计划并执行"
+		s.Ctx.Sayf("")
+		s.Ctx.Sayf("当前不是交互式终端，程序先在这里停下。完成上述操作后请依次执行：")
+		s.Ctx.Sayf("  1. blog-bootstrap plan（获取新的 consent hash）")
+		s.Ctx.Sayf("  2. blog-bootstrap run --consent <新 hash>")
+		s.Ctx.Sayf("已完成的步骤会自动跳过。")
+		return humanErr(msg)
+	}
+
+	mgr.Notify = func(line string) { s.Ctx.Sayf("  %s", line) }
+	greeting, account, err := mgr.PollEnrollment(ctx, key, endpoint)
+	if err != nil {
+		return err
+	}
+	switch greeting {
+	case sshauth.GreetingMatch:
+		s.Ctx.Sayf("SSH 身份验证通过：Hi %s!", s.Ctx.Config.Owner)
+		return nil
+	case sshauth.GreetingWrong:
+		return s.wrongAccount(account)
+	default:
+		return humanErr("公钥尚未在 GitHub 生效，请确认已登录 " + s.Ctx.Config.Owner + " 并点击 Add SSH key 后重新执行本命令")
 	}
 }
 
@@ -399,6 +450,7 @@ func (s *AuthStep) Verify(ctx context.Context) (map[string]string, error) {
 	}
 	mgr.Alias = block.Alias
 
+	s.Ctx.Sayf("  正在用 SSH 验证 GitHub 身份...")
 	out, err := mgr.Greeting(ctx, key, endpoint)
 	if err != nil {
 		return nil, asVerify(err)
@@ -412,9 +464,11 @@ func (s *AuthStep) Verify(ctx context.Context) (map[string]string, error) {
 
 	sourceURL := s.Ctx.Config.Source.WithAlias(block.Alias)
 	deployURL := s.Ctx.Config.Deploy.WithAlias(block.Alias)
+	s.Ctx.Sayf("  正在验证源仓库读权限...")
 	if err := mgr.ProbeRead(ctx, sourceURL); err != nil {
 		return nil, asVerify(err)
 	}
+	s.Ctx.Sayf("  正在验证部署仓库写权限（git push --dry-run）...")
 	if err := mgr.ProbeWrite(ctx, deployURL, s.Ctx.Config.Branch, s.Ctx.Config.GitIdentity.Name, s.Ctx.Config.GitIdentity.Email); err != nil {
 		return nil, asVerify(err)
 	}
