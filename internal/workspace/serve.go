@@ -175,6 +175,7 @@ func (s *Server) Smoke(ctx context.Context, dir, nodePath, hexoMain string) (map
 func (s *Server) poll(ctx context.Context, proc Process, url string, maxPolls int, interval time.Duration) (bool, string, string) {
 	probe := s.probe()
 	detail := "尚未连接"
+	start := time.Now()
 	for i := 0; i < maxPolls; i++ {
 		if err := ctx.Err(); err != nil {
 			return false, "运行被中断: " + err.Error(), proc.Output()
@@ -194,8 +195,8 @@ func (s *Server) poll(ctx context.Context, proc Process, url string, maxPolls in
 			detail = fmt.Sprintf("HTTP %d", status)
 		}
 		if (i+1)%40 == 0 {
-			s.notify("仍在等待预览服务就绪（已检查 %d 次，约 %d 秒，最后状态: %s）",
-				i+1, int((time.Duration(i+1) * interval).Seconds()), detail)
+			s.notify("仍在等待预览服务就绪（已检查 %d 次，已等待 %d 秒，最后状态: %s）",
+				i+1, int(time.Since(start).Seconds()), detail)
 		}
 		s.wait(interval)
 	}

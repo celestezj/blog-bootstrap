@@ -207,7 +207,7 @@ func (s *PreviewStep) Verify(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, protocol.Verify("NPM_INSTALL_FAILED", "无法读取 lockfile: "+err.Error())
 	}
-	s.Ctx.Sayf("正在启动临时预览服务并确认页面返回 HTTP 200...")
+	s.Ctx.Sayf("  正在启动临时预览服务并确认页面返回 HTTP 200...")
 	smoke, err := s.server(rt).Smoke(ctx, dir, rt.Node.Path, hexo)
 	if err != nil {
 		return nil, asVerify(err)
