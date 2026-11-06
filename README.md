@@ -26,6 +26,12 @@
 blog-bootstrap verify --strict --json
 ```
 
+## 文档
+
+- [使用手册](docs/usage.md)：配置、标准流程、`--json`/`--strict`/consent hash 的含义、中断续跑与常见问题。
+- [架构与实现原理](docs/architecture.md)：包结构、命令数据流、状态机、锁、失败模型与平台适配。
+- [AI 安装手册](docs/agent-install.md)：AI 必须遵守的硬规则；`blog-bootstrap agent-guide` 输出同一份内容。
+
 ## 状态
 
 五步逻辑与 CLI 协议已实现；发布脚本与跨平台 CI 验收见 `openspec/changes/add-environment-bootstrap/tasks.md`。
@@ -43,11 +49,13 @@ blog-bootstrap doctor --json
 blog-bootstrap agent-guide
 ```
 
-所有命令都支持 `--json`，输出带 `schema_version: 1` 的稳定协议；退出码为 0 成功、2 需人工、3 可重试、4 致命、5 验证失败。AI 手册见 `docs/agent-install.md`。
+所有命令都支持 `--json`，输出带 `schema_version: 1` 的稳定协议；退出码为 0 成功、2 需人工、3 可重试、4 致命、5 验证失败。为什么安装分成 plan/run/verify 三步、`--json` 与 `--strict` 的含义、consent hash 如何生成，见[使用手册](docs/usage.md#4-四个必须先理解的概念)。
 
 ## 配置
 
 复制 `blog-setup.example.yml` 为 `blog-setup.yml`，填写三个仓库地址与 commit 身份。`blog-setup.yml` 不提交。
+
+默认读取**当前工作目录**下的 `blog-setup.yml`（不是 exe 所在目录），可用 `--config <path>` 覆盖；配置中的相对路径按配置文件所在目录解析。字段与默认值详见[使用手册](docs/usage.md#3-配置文件)。
 
 | 字段 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
@@ -129,7 +137,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```text
 cmd/blog-bootstrap/   程序入口
 internal/             配置、状态机、探测、平台适配
-docs/                 AI 安装手册
+docs/                 使用手册、架构文档与 AI 安装手册
 scripts/              CI/文档一致性脚本
 install.sh / install.ps1 / install.cmd
 .goreleaser.yaml      六平台发布配置
