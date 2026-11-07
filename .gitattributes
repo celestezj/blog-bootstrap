@@ -1,0 +1,5 @@
+# Shell scripts must keep LF so CI can execute them.
+*.sh text eol=lf
+
+# Golden JSON is compared byte-for-byte by tests.
+internal/app/testdata/*.json text eol=lf

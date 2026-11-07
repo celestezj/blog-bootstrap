@@ -94,9 +94,15 @@ func assertGolden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatalf("missing golden %s (run UPDATE_GOLDEN=1 go test ./internal/app): %v", path, err)
 	}
-	if got != string(want) {
+	// Normalize line endings: Windows checkouts with core.autocrlf may hand
+	// back CRLF, while JSON output always uses LF.
+	if normalizeNewlines(got) != normalizeNewlines(string(want)) {
 		t.Fatalf("output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
 	}
+}
+
+func normalizeNewlines(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
 }
 
 func TestVerifyExitCodes(t *testing.T) {
