@@ -49,8 +49,8 @@
 
 ## 7. 集成验收
 
-- [ ] 7.1 在 Windows 干净用户环境执行完整五步（或等价隔离环境）。验证：`verify --strict --json` 返回 ok，退出码 0，收据完整。
-- [ ] 7.2 在 macOS/Linux CI 执行 plan dry-run 与单元测试矩阵。验证：CI 全部通过，无平台相关测试被跳过。
+- [x] 7.1 在 Windows 干净用户环境执行完整五步（或等价隔离环境）。验证：`verify --strict --json` 返回 ok，退出码 0，收据完整。
+- [x] 7.2 在 macOS/Linux CI 执行 plan dry-run 与单元测试矩阵。验证：CI 全部通过，无平台相关测试被跳过。
 - [x] 7.3 复核三个 Open Question 的实测结论并回写 design.md。验证：Open Questions 要么有结论，要么明确转为后续任务。
 
 ## Workflow follow-up
