@@ -1,3 +1,6 @@
+# Keep this file itself LF so its patterns stay parseable after checkout.
+.gitattributes text eol=lf
+
 # Shell scripts must keep LF so CI can execute them.
 *.sh text eol=lf
 
