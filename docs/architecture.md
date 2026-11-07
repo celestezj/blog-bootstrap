@@ -28,7 +28,7 @@
 | `internal/toolchain` | git/Node/hexo 探测、包管理器或便携安装、版本对账 |
 | `internal/workspace` | clone、子模块/主题、`npm ci`、构建、临时 server、进程树回收 |
 | `internal/state` | 状态缓存、步骤状态、路径、endpoint、收据，原子写入 |
-| `internal/lock` | 带 PID 的跨进程锁，stale 接管 |
+| `internal/lock` | 带 PID 的跨进程锁，OS 文件锁互斥 |
 | `internal/protocol` | JSON 信封、错误分类、退出码、`next_action` |
 | `internal/execx` | 仅通过 argv 执行外部命令；测试用 fake 执行器 |
 | `internal/netx` | 网络失败分类（超时、拒绝、不可达） |
@@ -205,10 +205,9 @@ Engine 输出步骤序号、动作列表、执行/验证状态；步骤实现输
 `run` 和 `verify` 都持有 `.bootstrap/run.lock`：
 
 - 锁文件包含 PID、主机名、启动时间、run_id；
-- 同一台机器上 PID 仍存活 → 返回 `LOCK_HELD`（可重试）；
-- PID 已不存在或来自其他主机 → 视为 stale，通过 rename 认领后接管；
-- 并发接管有竞态保护，最终只有一个进程成功；
-- 新鲜但不可读的锁文件有 2 秒宽限期，避免误抢正在写入的锁。
+- 互斥由操作系统文件锁保证（Unix `flock`、Windows `LockFileEx`），进程退出或崩溃时内核自动释放；
+- 拿不到文件锁的进程返回 `LOCK_HELD`（可重试），并报告锁文件中记录的 PID；
+- 锁文件内容仅用于诊断，不参与互斥判断，因此不存在 stale 接管竞态。
 
 ## 7. 五个步骤的内部实现
 

@@ -253,6 +253,13 @@ func (g *Git) IsGitRepo(ctx context.Context, dir string) bool {
 		return false
 	}
 	a, b := filepath.Clean(absDir), filepath.Clean(absTop)
+	// Compare by file identity so symlinked paths still match: on macOS
+	// t.TempDir() yields /var/..., while git reports /private/var/....
+	if ai, aErr := os.Stat(a); aErr == nil {
+		if bi, bErr := os.Stat(b); bErr == nil {
+			return os.SameFile(ai, bi)
+		}
+	}
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
