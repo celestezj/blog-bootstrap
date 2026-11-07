@@ -46,16 +46,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 脚本只负责下载、SHA256 校验、安装并调用二进制，不含安装业务逻辑。它们默认指向 `https://github.com/celestezj/blog-bootstrap`，**仓库或 Release 不存在时会下载失败**。
 
-### 尚未发布
+### 本地编译（不经过 Releases）
 
-在开发机构建后把二进制拷到目标机器：
+在开发机构建后把二进制拷到目标机器（需要 Go 1.24+，无需 CGO）：
+
+macOS / Linux：
 
 ```bash
 go build -o blog-bootstrap ./cmd/blog-bootstrap
 ```
 
+Windows（PowerShell 或 cmd）：
+
 ```powershell
 go build -o blog-bootstrap.exe ./cmd/blog-bootstrap
+```
+
+本地构建的版本号是 `dev`。需要模拟发布版本时注入 ldflags（与 GoReleaser 一致）：
+
+```powershell
+go build -ldflags "-X main.version=v0.1.0" -o blog-bootstrap.exe ./cmd/blog-bootstrap
 ```
 
 目标机器不需要 Go。可用 `blog-bootstrap version` 确认程序可运行。
@@ -315,8 +325,8 @@ blog-bootstrap verify --strict --json
 **Q：为什么直接运行 `blog-bootstrap.exe` 不能安装？**
 见 4.1。三段式是安全边界，不是多余步骤。
 
-**Q：还没发布到 GitHub，install 脚本怎么知道从哪下载？**
-它不知道。默认地址写死为 `https://github.com/celestezj/blog-bootstrap`，没有 Release 就会 404。未发布时直接 `go build` 并拷贝二进制，或用 `BLOG_BOOTSTRAP_BASE_URL` + `BLOG_BOOTSTRAP_VERSION` 指向镜像。
+**Q：install 脚本从哪下载？Release 不存在或访问不了怎么办？**
+默认地址固定为 `https://github.com/celestezj/blog-bootstrap`，未指定版本时取 latest Release。仓库不可访问、Release 不存在或网络受限时会下载失败；此时可在本机直接用 `go build` 编译并拷贝二进制，或用 `BLOG_BOOTSTRAP_BASE_URL` + `BLOG_BOOTSTRAP_VERSION` 指向镜像。
 
 **Q：plan 会自动读取同目录的 `blog-setup.yml` 吗？**
 会，但“同目录”指当前工作目录，不是 exe 所在目录；用 `--config` 可覆盖。

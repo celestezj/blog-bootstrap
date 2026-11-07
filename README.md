@@ -34,7 +34,7 @@ blog-bootstrap verify --strict --json
 
 ## 状态
 
-五步逻辑与 CLI 协议已实现；发布脚本与跨平台 CI 验收见 `openspec/changes/add-environment-bootstrap/tasks.md`。
+v0.1.0 已发布：五步逻辑、CLI 协议、发布脚本与三平台 CI 均已验证。
 
 ## 常用命令
 
@@ -82,17 +82,31 @@ blog-bootstrap agent-guide
 
 ## 构建
 
-需要 Go 1.24+：
+需要 Go 1.24+，无需 CGO。
+
+macOS / Linux：
 
 ```bash
 go build -o blog-bootstrap ./cmd/blog-bootstrap
+```
+
+Windows（PowerShell 或 cmd）：
+
+```powershell
+go build -o blog-bootstrap.exe ./cmd/blog-bootstrap
+```
+
+本地构建的版本号默认为 `dev`。需要模拟发布版本时，用 ldflags 注入（与 GoReleaser 一致）：
+
+```bash
+go build -ldflags "-X main.version=v0.1.0" -o blog-bootstrap.exe ./cmd/blog-bootstrap
 ```
 
 发布时由 CI 交叉编译 Windows/macOS/Linux 的 amd64/arm64，并通过 GitHub Releases 分发。
 
 ## 安装
 
-发布后，从 GitHub Releases 下载对应平台归档，或使用仓库中的引导脚本：
+从 GitHub Releases 下载对应平台归档，或使用仓库中的引导脚本：
 
 macOS / Linux：
 
@@ -131,6 +145,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 - 主流 Linux 发行版（amd64/arm64），需要 glibc 2.17+ 或兼容环境。
 
 运行不依赖 Go；git 与 Node.js 缺失时由安装器按 plan 安装或下载便携版本。`blog-bootstrap version` 输出发布时通过 ldflags 注入的版本号。
+
+## 发版（维护者）
+
+发布由 `.github/workflows/release.yml` 在推送 `v*` tag 时触发，使用 GoReleaser 交叉编译六平台产物：
+
+1. 确认 `main` 的 CI（`.github/workflows/ci.yml`）三平台全绿。
+2. 创建并推送 tag。tag 一旦发布不要再移动或复用：
+
+   ```bash
+   git tag -a v0.1.0 -m "v0.1.0: first working bootstrap"
+   git push origin v0.1.0
+   ```
+
+3. 等 `release` workflow 完成，在 https://github.com/celestezj/blog-bootstrap/releases 核对以下产物：
+   - `blog-bootstrap_<版本>_windows_amd64.zip`、`windows_arm64.zip`
+   - `blog-bootstrap_<版本>_darwin_amd64.tar.gz`、`darwin_arm64.tar.gz`
+   - `blog-bootstrap_<版本>_linux_amd64.tar.gz`、`linux_arm64.tar.gz`
+   - `checksums.txt`
+4. 发布成功后，`install.sh` / `install.ps1` 默认取 latest，会自动指向这个版本。
+
+注意：`ci.yml` 只跑测试，不产生可下载产物；只有推送 `v` 前缀的 tag 才会创建 Release。
 
 ## 目录
 
